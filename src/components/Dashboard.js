@@ -96,11 +96,12 @@ export default function Dashboard() {
           <h3 style={{ color: '#2c3e50', marginTop: 0 }}>군집별 페르소나 수</h3>
           <ResponsiveContainer width="100%" height={250}>
             <BarChart data={clusterCounts}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-              <YAxis />
-              <Tooltip />
-              <Bar dataKey="count" fill="#3498DB" radius={[4, 4, 0, 0]} />
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                <YAxis />
+                <Tooltip />
+                <Legend />
+                <Bar dataKey="count" fill="#3498DB" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
