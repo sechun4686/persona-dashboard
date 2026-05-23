@@ -6,7 +6,6 @@ import {
 
 const COLORS = ['#E74C3C', '#3498DB', '#2ECC71', '#F39C12', '#9B59B6'];
 
-// 더미 데이터
 const dummyData = [
   { persona_id: 'P001', age: 25, gender: '여', region: '서울', occupation: '사무원', response: '저는 새로운 제품이 출시되면 바로 구매하는 편이에요.', cluster: 3, cluster_summary: '리서치형 소비자' },
   { persona_id: 'P002', age: 32, gender: '남', region: '경기', occupation: '개발자', response: '가격 대비 성능을 꼼꼼히 따져보고 구매합니다.', cluster: 3, cluster_summary: '리서치형 소비자' },
@@ -20,7 +19,7 @@ const dummyData = [
   { persona_id: 'P010', age: 35, gender: '남', region: '서울', occupation: '개발자', response: '뉴스는 포털 앱으로만 봐요.', cluster: 2, cluster_summary: '디지털 몰입형 미니멀콘' },
 ];
 
-export default function Dashboard() {
+export default function Dashboard({ experimentData, onBack }) {
   const [genderFilter, setGenderFilter] = useState('전체');
   const [regionFilter, setRegionFilter] = useState('전체');
 
@@ -29,7 +28,6 @@ export default function Dashboard() {
     (regionFilter === '전체' || d.region === regionFilter)
   );
 
-  // 군집별 카운트
   const clusterCounts = Object.values(
     filtered.reduce((acc, d) => {
       if (!acc[d.cluster_summary]) acc[d.cluster_summary] = { name: d.cluster_summary, count: 0 };
@@ -38,7 +36,6 @@ export default function Dashboard() {
     }, {})
   );
 
-  // 성별 카운트
   const genderCounts = Object.values(
     filtered.reduce((acc, d) => {
       if (!acc[d.gender]) acc[d.gender] = { name: d.gender, value: 0 };
@@ -47,15 +44,58 @@ export default function Dashboard() {
     }, {})
   );
 
-  const regions = ['전체', ...new Set(dummyData.map(d => d.region))];
+  // 히트맵 데이터
+  const regions = [...new Set(dummyData.map(d => d.region))];
+  const clusters = [...new Set(dummyData.map(d => d.cluster_summary))];
+  const heatmapData = regions.map(region => {
+    const row = { region };
+    clusters.forEach(cluster => {
+      row[cluster] = filtered.filter(d => d.region === region && d.cluster_summary === cluster).length;
+    });
+    return row;
+  });
+
+  const allRegions = ['전체', ...new Set(dummyData.map(d => d.region))];
+
+  const cardStyle = { background: 'white', padding: '20px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' };
 
   return (
     <div style={{ padding: '24px', fontFamily: 'sans-serif', background: '#f8f9fa', minHeight: '100vh' }}>
-      <h1 style={{ color: '#2c3e50', marginBottom: '8px' }}>가상 사용자 리서치 대시보드</h1>
-      <p style={{ color: '#7f8c8d', marginBottom: '24px' }}>총 {filtered.length}명 페르소나 분석 결과</p>
+
+      {/* 헤더 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '8px' }}>
+        <button onClick={onBack}
+          style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #dde1e7', background: 'white', cursor: 'pointer', fontSize: '14px', color: '#2c3e50' }}>
+          뒤로가기
+        </button>
+        <h1 style={{ color: '#2c3e50', margin: 0 }}>가상 사용자 리서치 대시보드</h1>
+      </div>
+
+      {/* 실험 정보 배너 */}
+      {experimentData && (
+        <div style={{ background: '#ebf5fb', border: '1px solid #aed6f1', borderRadius: '12px', padding: '16px', marginBottom: '20px' }}>
+          <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap', alignItems: 'center' }}>
+            <div><span style={{ fontSize: '12px', color: '#5d8aa8' }}>실험 제목</span><p style={{ margin: '2px 0', fontWeight: '700', color: '#2c3e50' }}>{experimentData.experiment_title}</p></div>
+            <div><span style={{ fontSize: '12px', color: '#5d8aa8' }}>실험 목적</span><p style={{ margin: '2px 0', fontWeight: '600', color: '#2c3e50' }}>{experimentData.experiment_type}</p></div>
+            <div><span style={{ fontSize: '12px', color: '#5d8aa8' }}>페르소나 수</span><p style={{ margin: '2px 0', fontWeight: '600', color: '#2c3e50' }}>{experimentData.n}명</p></div>
+            {experimentData.filters?.sex && <div><span style={{ fontSize: '12px', color: '#5d8aa8' }}>성별</span><p style={{ margin: '2px 0', fontWeight: '600', color: '#2c3e50' }}>{experimentData.filters.sex}</p></div>}
+            {experimentData.filters?.province && <div><span style={{ fontSize: '12px', color: '#5d8aa8' }}>지역</span><p style={{ margin: '2px 0', fontWeight: '600', color: '#2c3e50' }}>{experimentData.filters.province}</p></div>}
+            <div><span style={{ fontSize: '12px', color: '#5d8aa8' }}>질문 수</span><p style={{ margin: '2px 0', fontWeight: '600', color: '#2c3e50' }}>{experimentData.questions?.length}개</p></div>
+          </div>
+          {experimentData.questions?.map((q, i) => (
+            <div key={i} style={{ marginTop: '8px', fontSize: '13px', color: '#2c3e50' }}>
+              <span style={{ background: q.type === '주관식' ? '#3498DB' : '#E74C3C', color: 'white', padding: '2px 8px', borderRadius: '8px', fontSize: '11px', marginRight: '8px' }}>{q.type}</span>
+              {q.content}
+            </div>
+          ))}
+          <p style={{ margin: '8px 0 0', fontSize: '12px', color: '#e67e22' }}>현재 더미 데이터로 표시 중 — 실제 데이터 연동 후 업데이트 예정</p>
+        </div>
+      )}
+
+      <p style={{ color: '#7f8c8d', marginBottom: '20px' }}>총 {filtered.length}명 페르소나 분석 결과</p>
 
       {/* 필터 */}
-      <div style={{ display: 'flex', gap: '16px', marginBottom: '24px', background: 'white', padding: '16px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
+      <div style={{ ...cardStyle, display: 'flex', gap: '16px', marginBottom: '20px' }}>
         <div>
           <label style={{ fontWeight: 'bold', marginRight: '8px' }}>성별:</label>
           {['전체', '남', '여'].map(g => (
@@ -70,20 +110,20 @@ export default function Dashboard() {
           <label style={{ fontWeight: 'bold', marginRight: '8px' }}>지역:</label>
           <select value={regionFilter} onChange={e => setRegionFilter(e.target.value)}
             style={{ padding: '6px 12px', borderRadius: '8px', border: '1px solid #ddd' }}>
-            {regions.map(r => <option key={r}>{r}</option>)}
+            {allRegions.map(r => <option key={r}>{r}</option>)}
           </select>
         </div>
       </div>
 
       {/* 지표 카드 */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '20px' }}>
         {[
           { label: '총 페르소나', value: filtered.length + '명' },
           { label: '군집 수', value: new Set(filtered.map(d => d.cluster)).size + '개' },
           { label: '평균 나이', value: (filtered.reduce((s, d) => s + d.age, 0) / filtered.length || 0).toFixed(1) + '세' },
           { label: '지역 수', value: new Set(filtered.map(d => d.region)).size + '개' },
         ].map(card => (
-          <div key={card.label} style={{ background: 'white', padding: '20px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', textAlign: 'center' }}>
+          <div key={card.label} style={{ ...cardStyle, textAlign: 'center' }}>
             <p style={{ color: '#7f8c8d', margin: '0 0 8px' }}>{card.label}</p>
             <p style={{ fontSize: '28px', fontWeight: 'bold', color: '#2c3e50', margin: 0 }}>{card.value}</p>
           </div>
@@ -91,26 +131,27 @@ export default function Dashboard() {
       </div>
 
       {/* 차트 */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '24px' }}>
-        <div style={{ background: 'white', padding: '20px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '20px' }}>
+        <div style={cardStyle}>
           <h3 style={{ color: '#2c3e50', marginTop: 0 }}>군집별 페르소나 수</h3>
           <ResponsiveContainer width="100%" height={250}>
             <BarChart data={clusterCounts}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Bar dataKey="count" fill="#3498DB" radius={[4, 4, 0, 0]} />
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+              <YAxis />
+              <Tooltip />
+              <Legend />
+              <Bar dataKey="count" fill="#3498DB" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
 
-        <div style={{ background: 'white', padding: '20px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
+        <div style={cardStyle}>
           <h3 style={{ color: '#2c3e50', marginTop: 0 }}>성별 분포</h3>
           <ResponsiveContainer width="100%" height={250}>
             <PieChart>
-              <Pie data={genderCounts} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
+              <Pie data={genderCounts} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90}
+                label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
                 {genderCounts.map((_, i) => <Cell key={i} fill={COLORS[i]} />)}
               </Pie>
               <Tooltip />
@@ -119,9 +160,41 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* 히트맵 */}
+      <div style={{ ...cardStyle, marginBottom: '20px', overflowX: 'auto' }}>
+        <h3 style={{ color: '#2c3e50', marginTop: 0 }}>지역 × 군집 히트맵</h3>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+          <thead>
+            <tr>
+              <th style={{ padding: '8px', background: '#f8f9fa', borderBottom: '2px solid #dee2e6', textAlign: 'left' }}>지역</th>
+              {clusters.map(c => (
+                <th key={c} style={{ padding: '8px', background: '#f8f9fa', borderBottom: '2px solid #dee2e6', textAlign: 'center', fontSize: '11px' }}>{c}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {heatmapData.map((row, i) => (
+              <tr key={i}>
+                <td style={{ padding: '8px', fontWeight: '600', color: '#2c3e50', borderBottom: '1px solid #f0f0f0' }}>{row.region}</td>
+                {clusters.map(c => {
+                  const val = row[c] || 0;
+                  const opacity = val === 0 ? 0.05 : val / 3;
+                  return (
+                    <td key={c} style={{ padding: '8px', textAlign: 'center', borderBottom: '1px solid #f0f0f0',
+                      background: `rgba(52, 152, 219, ${opacity})`, fontWeight: val > 0 ? '600' : '400', color: val > 0 ? '#2c3e50' : '#bdc3c7' }}>
+                      {val}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
       {/* 응답 테이블 */}
-      <div style={{ background: 'white', padding: '20px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
-        <h3 style={{ color: '#2c3e50', marginTop: 0 }}>📋 페르소나 응답 데이터</h3>
+      <div style={{ ...cardStyle, overflowX: 'auto' }}>
+        <h3 style={{ color: '#2c3e50', marginTop: 0 }}>페르소나 응답 데이터</h3>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: '#f8f9fa' }}>
@@ -137,7 +210,9 @@ export default function Dashboard() {
                 <td style={{ padding: '12px' }}>{d.age}</td>
                 <td style={{ padding: '12px' }}>{d.gender}</td>
                 <td style={{ padding: '12px' }}>{d.region}</td>
-                <td style={{ padding: '12px' }}><span style={{ background: '#e8f4fd', color: '#2980b9', padding: '4px 10px', borderRadius: '12px', fontSize: '12px' }}>{d.cluster_summary}</span></td>
+                <td style={{ padding: '12px' }}>
+                  <span style={{ background: '#e8f4fd', color: '#2980b9', padding: '4px 10px', borderRadius: '12px', fontSize: '12px' }}>{d.cluster_summary}</span>
+                </td>
                 <td style={{ padding: '12px', fontSize: '13px', color: '#636e72' }}>{d.response}</td>
               </tr>
             ))}
