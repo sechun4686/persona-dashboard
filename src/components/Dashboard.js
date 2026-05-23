@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   PieChart, Pie, Cell, ResponsiveContainer
@@ -20,8 +20,30 @@ const dummyData = [
 ];
 
 export default function Dashboard({ experimentData, onBack }) {
+  const dashboardRef = useRef(null);
   const [genderFilter, setGenderFilter] = useState('전체');
   const [regionFilter, setRegionFilter] = useState('전체');
+
+  const downloadPNG = async () => {
+    const html2canvas = (await import('html2canvas')).default;
+    const canvas = await html2canvas(dashboardRef.current);
+    const link = document.createElement('a');
+    link.download = 'dashboard.png';
+    link.href = canvas.toDataURL();
+    link.click();
+  };
+
+  const downloadPDF = async () => {
+    const html2canvas = (await import('html2canvas')).default;
+    const { jsPDF } = await import('jspdf');
+    const canvas = await html2canvas(dashboardRef.current);
+    const imgData = canvas.toDataURL('image/png');
+    const pdf = new jsPDF('l', 'mm', 'a4');
+    const width = pdf.internal.pageSize.getWidth();
+    const height = (canvas.height * width) / canvas.width;
+    pdf.addImage(imgData, 'PNG', 0, 0, width, height);
+    pdf.save('dashboard.pdf');
+  };
 
   const filtered = dummyData.filter(d =>
     (genderFilter === '전체' || d.gender === genderFilter) &&
@@ -44,7 +66,6 @@ export default function Dashboard({ experimentData, onBack }) {
     }, {})
   );
 
-  // 히트맵 데이터
   const regions = [...new Set(dummyData.map(d => d.region))];
   const clusters = [...new Set(dummyData.map(d => d.cluster_summary))];
   const heatmapData = regions.map(region => {
@@ -56,13 +77,11 @@ export default function Dashboard({ experimentData, onBack }) {
   });
 
   const allRegions = ['전체', ...new Set(dummyData.map(d => d.region))];
-
   const cardStyle = { background: 'white', padding: '20px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' };
 
   return (
-    <div style={{ padding: '24px', fontFamily: 'sans-serif', background: '#f8f9fa', minHeight: '100vh' }}>
+    <div ref={dashboardRef} style={{ padding: '24px', fontFamily: 'sans-serif', background: '#f8f9fa', minHeight: '100vh' }}>
 
-      {/* 헤더 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '8px' }}>
         <button onClick={onBack}
           style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid #dde1e7', background: 'white', cursor: 'pointer', fontSize: '14px', color: '#2c3e50' }}>
@@ -71,7 +90,6 @@ export default function Dashboard({ experimentData, onBack }) {
         <h1 style={{ color: '#2c3e50', margin: 0 }}>가상 사용자 리서치 대시보드</h1>
       </div>
 
-      {/* 실험 정보 배너 */}
       {experimentData && (
         <div style={{ background: '#ebf5fb', border: '1px solid #aed6f1', borderRadius: '12px', padding: '16px', marginBottom: '20px' }}>
           <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -94,7 +112,6 @@ export default function Dashboard({ experimentData, onBack }) {
 
       <p style={{ color: '#7f8c8d', marginBottom: '20px' }}>총 {filtered.length}명 페르소나 분석 결과</p>
 
-      {/* 필터 */}
       <div style={{ ...cardStyle, display: 'flex', gap: '16px', marginBottom: '20px' }}>
         <div>
           <label style={{ fontWeight: 'bold', marginRight: '8px' }}>성별:</label>
@@ -115,7 +132,6 @@ export default function Dashboard({ experimentData, onBack }) {
         </div>
       </div>
 
-      {/* 지표 카드 */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '20px' }}>
         {[
           { label: '총 페르소나', value: filtered.length + '명' },
@@ -130,7 +146,6 @@ export default function Dashboard({ experimentData, onBack }) {
         ))}
       </div>
 
-      {/* 차트 */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '20px' }}>
         <div style={cardStyle}>
           <h3 style={{ color: '#2c3e50', marginTop: 0 }}>군집별 페르소나 수</h3>
@@ -145,7 +160,6 @@ export default function Dashboard({ experimentData, onBack }) {
             </BarChart>
           </ResponsiveContainer>
         </div>
-
         <div style={cardStyle}>
           <h3 style={{ color: '#2c3e50', marginTop: 0 }}>성별 분포</h3>
           <ResponsiveContainer width="100%" height={250}>
@@ -160,7 +174,6 @@ export default function Dashboard({ experimentData, onBack }) {
         </div>
       </div>
 
-      {/* 히트맵 */}
       <div style={{ ...cardStyle, marginBottom: '20px', overflowX: 'auto' }}>
         <h3 style={{ color: '#2c3e50', marginTop: 0 }}>지역 × 군집 히트맵</h3>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
@@ -192,8 +205,7 @@ export default function Dashboard({ experimentData, onBack }) {
         </table>
       </div>
 
-      {/* 응답 테이블 */}
-      <div style={{ ...cardStyle, overflowX: 'auto' }}>
+      <div style={{ ...cardStyle, overflowX: 'auto', marginBottom: '20px' }}>
         <h3 style={{ color: '#2c3e50', marginTop: 0 }}>페르소나 응답 데이터</h3>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
@@ -219,6 +231,18 @@ export default function Dashboard({ experimentData, onBack }) {
           </tbody>
         </table>
       </div>
+
+      <div style={{ display: 'flex', gap: '12px' }}>
+        <button onClick={downloadPNG}
+          style={{ flex: 1, padding: '12px', borderRadius: '10px', border: 'none', background: '#3498DB', color: 'white', cursor: 'pointer', fontWeight: '600', fontSize: '14px' }}>
+          PNG 다운로드
+        </button>
+        <button onClick={downloadPDF}
+          style={{ flex: 1, padding: '12px', borderRadius: '10px', border: 'none', background: '#2ECC71', color: 'white', cursor: 'pointer', fontWeight: '600', fontSize: '14px' }}>
+          PDF 다운로드
+        </button>
+      </div>
+
     </div>
   );
 }
