@@ -16,7 +16,7 @@ const LandingPage = ({ onStart }) => {
           align-items: center;
           justify-content: center;
           text-align: center;
-          padding: 120px 40px 0 40px;
+          padding: 160px 40px 0 40px;
           position: relative;
           overflow: hidden;
         }
