@@ -16,7 +16,7 @@ const LandingPage = ({ onStart }) => {
           align-items: center;
           justify-content: center;
           text-align: center;
-          padding: 60px 40px 0 40px;
+          padding: 120px 40px 0 40px;
           position: relative;
           overflow: hidden;
         }
@@ -101,7 +101,7 @@ const LandingPage = ({ onStart }) => {
           font-family: 'Inter', sans-serif;
           font-weight: 400;
           font-size: 11px;
-          color: #9ca3af;
+          color: #575757;
           text-align: center;
           line-height: 1.5;
         }
