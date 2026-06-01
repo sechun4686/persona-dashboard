@@ -4,7 +4,6 @@ import {
   PieChart, Pie, Cell, ResponsiveContainer
 } from 'recharts';
 
-const COLORS = ['#7C3AED', '#3b82f6', '#10b981', '#f59e0b', '#ef4444'];
 
 const dummyData = [
   { persona_id: 'P001', age: 25, gender: '여', region: '서울', occupation: '사무원', response: '저는 새로운 제품이 출시되면 바로 구매하는 편이에요.', cluster: 3, cluster_summary: '리서치형 소비자' },
