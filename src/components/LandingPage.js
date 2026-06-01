@@ -35,7 +35,7 @@ const LandingPage = ({ onStart }) => {
           font-family: 'Inria Serif', serif;
           font-weight: 400;
           font-size: 18px;
-          color: #6b7280;
+          color: #333539;
           margin: 0 0 36px 0;
           letter-spacing: 0.01em;
         }
