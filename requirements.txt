@@ -1,0 +1,5 @@
+datasets
+boto3
+python-dotenv
+sentence-transformers
+opensearch-py

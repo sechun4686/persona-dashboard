@@ -1,0 +1,10 @@
+.env
+venv/
+data/
+__pycache__/
+*.pyc
+*.pdf
+*.pem
+*.zip
+.claude/
+.ipynb_checkpoints/
