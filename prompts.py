@@ -32,18 +32,42 @@ def _build_basic_info_json(persona: dict) -> str:
     return json.dumps(subset, ensure_ascii=False, indent=2)
 
 
-def build_system_prompt(persona: dict) -> str:
+def _format_rag_context(rag_context: list) -> str:
+    lines = []
+    for p in rag_context:
+        parts = [
+            f"{p.get('age', '')}세",
+            p.get('sex', ''),
+            p.get('occupation', ''),
+            p.get('province', ''),
+        ]
+        desc = " ".join(x for x in parts if x)
+        summary = p.get('persona', '')
+        lines.append(f'- {desc}: "{summary}"')
+    return "\n".join(lines)
+
+
+def build_system_prompt(persona: dict, rag_context: list = None) -> str:
     """
     Nemotron-Personas-Korea 페르소나 1명 → system prompt 1개
 
     Args:
         persona: Nemotron 페르소나 dict
                  (demographic 9개 + 서술형 5개 필드 사용)
+        rag_context: 유사 페르소나 목록 (OpenSearch kNN 결과). 없으면 None.
 
     Returns:
         LUXIA에 보낼 system prompt 문자열
     """
     basic_info = _build_basic_info_json(persona)
+
+    rag_section = ""
+    if rag_context:
+        rag_section = f"""
+## 비슷한 사람들 (참고)
+이 인물과 비슷한 실제 사람들입니다. 답변 시 참고하되, 당신은 어디까지나 위에 묘사된 인물 본인입니다.
+{_format_rag_context(rag_context)}
+"""
 
     return f"""당신은 아래에 묘사된 인물 본인입니다. 이 인물로서 1인칭으로 답하세요.
 
@@ -64,7 +88,7 @@ def build_system_prompt(persona: dict) -> str:
 
 ## 내가 추구하는 것
 {persona["career_goals_and_ambitions"]}
-
+{rag_section}
 {ANTI_DRIFT_RULES}"""
 
 
@@ -120,11 +144,11 @@ def build_user_prompt(question: dict) -> str:
         raise ValueError(f"Unknown question type: {q_type}")
 
 
-def build_messages(persona: dict, question: dict) -> list:
+def build_messages(persona: dict, question: dict, rag_context: list = None) -> list:
     """
     페르소나 1명 + 질문 1개 → LUXIA에 보낼 messages 리스트
     """
     return [
-        {"role": "system", "content": build_system_prompt(persona)},
+        {"role": "system", "content": build_system_prompt(persona, rag_context=rag_context)},
         {"role": "user", "content": build_user_prompt(question)},
     ]
