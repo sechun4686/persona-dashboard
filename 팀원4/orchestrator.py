@@ -258,7 +258,7 @@ async def run_llm_parallel(state: OrchestratorState) -> OrchestratorState:
 
     _timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
     _headers = {
-        "Authorization": f"Bearer {LUXIA_API_KEY}",
+        "apikey": LUXIA_API_KEY,
         "Content-Type": "application/json",
     }
 
