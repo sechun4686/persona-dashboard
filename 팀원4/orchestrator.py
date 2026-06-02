@@ -28,8 +28,8 @@ from persona_sampler import sample_personas
 
 # 팀원2, 팀원3 모듈 경로 주입
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(_ROOT, "팀원2"))
-sys.path.insert(0, os.path.join(_ROOT, "팀원3", "src"))
+sys.path.insert(0, _ROOT)                                    # prompts.py, postprocess.py (프로젝트 루트)
+sys.path.insert(0, os.path.join(_ROOT, "team3", "src"))     # rag.py
 
 from prompts import build_messages                                          # noqa: E402
 from postprocess import filter_response_quality, parse_objective_response  # noqa: E402
@@ -224,14 +224,18 @@ async def fetch_rag_contexts(state: OrchestratorState) -> OrchestratorState:
 def build_prompts(state: OrchestratorState) -> OrchestratorState:
     """
     각 (persona × question) 쌍에 대해 팀원2 prompts.build_messages를 호출한다.
+    rag_contexts가 있으면 각 쌍의 유사 페르소나를 system prompt에 주입한다.
     """
     personas: list[dict] = state.get("personas", [])
     questions: list[dict] = state.get("questions", [])
+    rag_contexts: dict = state.get("rag_contexts", {})
 
     prompt_list = []
     for persona in personas:
         for question in questions:
-            messages = build_messages(persona, question)
+            key = f"{persona.get('uuid')}:{question['question_id']}"
+            rag_context = rag_contexts.get(key) or None
+            messages = build_messages(persona, question, rag_context=rag_context)
             prompt_list.append({
                 "persona_uuid": persona.get("uuid"),
                 "question_id": question["question_id"],
