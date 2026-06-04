@@ -17,7 +17,6 @@ const dummyData = [
   { persona_id: 'P010', age: 35, gender: '남', region: '서울', occupation: '개발자', response: '뉴스는 포털 앱으로만 봐요.', cluster: 2, cluster_summary: '디지털 몰입형 미니멀콘' },
 ];
 
-// API 결과를 대시보드 형식으로 변환
 function parseApiResult(apiResult) {
   if (!apiResult || !apiResult.personas || !apiResult.responses) return null;
 
@@ -27,19 +26,25 @@ function parseApiResult(apiResult) {
   });
 
   const rows = [];
+  const seenPersonas = new Set();
+
   apiResult.responses.forEach((r, i) => {
     if (!r.response && !r.selected_option) return;
     const persona = personaMap[r.persona_uuid] || {};
-    rows.push({
-      persona_id: r.persona_uuid?.slice(0, 8) || `P${String(i).padStart(3, '0')}`,
-      age: persona.age || 0,
-      gender: persona.sex === '여자' ? '여' : persona.sex === '남자' ? '남' : persona.sex || '?',
-      region: persona.province || '?',
-      occupation: persona.occupation || '?',
-      response: r.response || r.selected_option || '',
-      cluster: 0,
-      cluster_summary: '분석 대기중',
-    });
+
+    if (!seenPersonas.has(r.persona_uuid)) {
+      seenPersonas.add(r.persona_uuid);
+      rows.push({
+        persona_id: r.persona_uuid?.slice(0, 8) || `P${String(i).padStart(3, '0')}`,
+        age: persona.age || 0,
+        gender: persona.sex === '여자' ? '여' : persona.sex === '남자' ? '남' : persona.sex || '?',
+        region: persona.province || '?',
+        occupation: persona.occupation || '?',
+        response: r.response || r.selected_option || '',
+        cluster: r.cluster !== null && r.cluster !== undefined ? r.cluster : 0,
+        cluster_summary: r.cluster_summary || '분석 대기중',
+      });
+    }
   });
 
   return rows.length > 0 ? rows : null;
@@ -52,26 +57,50 @@ export default function Dashboard({ experimentData, onBack }) {
 
   const downloadPNG = async () => {
     const html2canvas = (await import('html2canvas')).default;
-    const canvas = await html2canvas(dashboardRef.current);
+    const canvas = await html2canvas(dashboardRef.current, {
+      scale: 2,  // 2배 해상도
+      useCORS: true,
+      scrollY: 0,
+      windowWidth: dashboardRef.current.scrollWidth,
+      windowHeight: dashboardRef.current.scrollHeight,
+    });
     const link = document.createElement('a');
     link.download = 'dashboard.png';
-    link.href = canvas.toDataURL();
+    link.href = canvas.toDataURL('image/png');
     link.click();
   };
 
   const downloadPDF = async () => {
     const html2canvas = (await import('html2canvas')).default;
     const { jsPDF } = await import('jspdf');
-    const canvas = await html2canvas(dashboardRef.current);
+    const canvas = await html2canvas(dashboardRef.current, {
+      scale: 2,
+      useCORS: true,
+      scrollY: 0,
+      windowWidth: dashboardRef.current.scrollWidth,
+      windowHeight: dashboardRef.current.scrollHeight,
+    });
     const imgData = canvas.toDataURL('image/png');
-    const pdf = new jsPDF('l', 'mm', 'a4');
-    const width = pdf.internal.pageSize.getWidth();
-    const height = (canvas.height * width) / canvas.width;
-    pdf.addImage(imgData, 'PNG', 0, 0, width, height);
+    const pdf = new jsPDF('p', 'mm', 'a4');  // 세로 방향으로 변경
+    const pdfWidth = pdf.internal.pageSize.getWidth();
+    const pdfHeight = pdf.internal.pageSize.getHeight();
+    const imgWidth = canvas.width;
+    const imgHeight = canvas.height;
+    const ratio = imgWidth / pdfWidth;
+    const totalHeight = imgHeight / ratio;
+    let position = 0;
+
+    // 여러 페이지로 나눠서 저장
+    while (position < totalHeight) {
+      pdf.addImage(imgData, 'PNG', 0, -position, pdfWidth, totalHeight);
+      position += pdfHeight;
+      if (position < totalHeight) {
+        pdf.addPage();
+      }
+    }
     pdf.save('dashboard.pdf');
   };
 
-  // API 결과 있으면 실제 데이터, 없으면 더미
   const apiParsed = experimentData?.apiResult ? parseApiResult(experimentData.apiResult) : null;
   const baseData = apiParsed || dummyData;
   const isRealData = !!apiParsed;
@@ -127,7 +156,6 @@ export default function Dashboard({ experimentData, onBack }) {
       maxWidth: '1100px', margin: '0 auto',
     }}>
 
-      {/* 상단 헤더 */}
       <div style={{
         background: 'white', borderRadius: '16px',
         border: '1px solid #ebebeb', padding: '20px 24px',
@@ -161,8 +189,8 @@ export default function Dashboard({ experimentData, onBack }) {
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
           {[
             experimentData?.experiment_type,
-            `응답자 ${experimentData?.n || filtered.length}명`,
-            `군집 ${new Set(filtered.map(d => d.cluster)).size}개`
+            `응답자 ${filtered.length}명`,
+            `군집 ${new Set(filtered.map(d => d.cluster_summary)).size}개`
           ].filter(Boolean).map((tag, i) => (
             <span key={i} style={{
               background: '#f5f5f5', color: '#555',
@@ -178,11 +206,10 @@ export default function Dashboard({ experimentData, onBack }) {
         </div>
       </div>
 
-      {/* 지표 카드 */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '20px' }}>
         {[
           { label: '총 페르소나', value: filtered.length + '명' },
-          { label: '군집 수', value: new Set(filtered.map(d => d.cluster)).size + '개' },
+          { label: '군집 수', value: new Set(filtered.map(d => d.cluster_summary)).size + '개' },
           { label: '평균 나이', value: (filtered.reduce((s, d) => s + d.age, 0) / (filtered.length || 1)).toFixed(1) + '세' },
           { label: '지역 수', value: new Set(filtered.map(d => d.region)).size + '개' },
         ].map(card => (
@@ -193,7 +220,6 @@ export default function Dashboard({ experimentData, onBack }) {
         ))}
       </div>
 
-      {/* 필터 */}
       <div style={{ ...cardStyle, display: 'flex', gap: '20px', marginBottom: '20px', alignItems: 'center', flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <span style={{ fontSize: '13px', fontWeight: '600', color: '#111' }}>성별</span>
@@ -217,7 +243,6 @@ export default function Dashboard({ experimentData, onBack }) {
         </div>
       </div>
 
-      {/* 차트 */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '20px' }}>
         <div style={cardStyle}>
           <h3 style={{ color: '#111', marginTop: 0, fontSize: '15px', fontWeight: '700' }}>군집별 응답자 수</h3>
@@ -247,7 +272,6 @@ export default function Dashboard({ experimentData, onBack }) {
         </div>
       </div>
 
-      {/* 히트맵 */}
       <div style={{ ...cardStyle, marginBottom: '20px', overflowX: 'auto' }}>
         <h3 style={{ color: '#111', marginTop: 0, fontSize: '15px', fontWeight: '700' }}>지역 × 군집 분포</h3>
         <p style={{ color: '#999', fontSize: '12px', marginTop: '-12px', marginBottom: '16px' }}>각 지역별 군집 분포를 보여주는 히트맵</p>
@@ -282,7 +306,6 @@ export default function Dashboard({ experimentData, onBack }) {
         </table>
       </div>
 
-      {/* 응답 테이블 */}
       <div style={{ ...cardStyle, overflowX: 'auto', marginBottom: '20px' }}>
         <h3 style={{ color: '#111', marginTop: 0, fontSize: '15px', fontWeight: '700' }}>페르소나 응답 데이터</h3>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>

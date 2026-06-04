@@ -32,7 +32,7 @@ const LandingPage = ({ onStart }) => {
         }
 
         .landing-subtitle {
-          font-family: 'Inria Serif', serif;
+          font-family: 'Noto Sans KR', sans-serif; 
           font-weight: 400;
           font-size: 18px;
           color: #333539;
@@ -121,8 +121,8 @@ const LandingPage = ({ onStart }) => {
       `}</style>
 
       <div className="landing-wrap">
-        <h1 className="landing-title">가상 사용자 리서치 플랫폼</h1>
-        <p className="landing-subtitle">Using Korean Synthetic Personas</p>
+        <h1 className="landing-title">K-Persona Lab</h1>
+        <p className="landing-subtitle">생성형 AI 기반 가상 사용자 연구 플랫폼</p>
 
         <button className="landing-btn" onClick={onStart}>
           ▷ 실험 시작하기
