@@ -12,13 +12,20 @@ function App() {
   }
 
   if (page === 'form') {
-    return <ExperimentForm
-      onSubmit={(data) => { setExperimentData(data); setPage('dashboard'); }}
-      onBack={() => setPage('landing')}
-    />;
+    return (
+      <ExperimentForm
+        initialData={experimentData} // ★ 1. 기존에 저장된 입력 데이터를 폼의 초기값으로 쏴주기!
+        onSubmit={(data) => { 
+          setExperimentData(data); 
+          setPage('dashboard'); 
+        }}
+        onBack={() => setPage('landing')}
+      />
+    );
   }
 
-  return <Dashboard experimentData={experimentData} onBack={() => setPage('landing')} />;
+  /* ★ 2. 결과 창(Dashboard)에서 뒤로 갈 때 'landing'이 아니라 'form'으로 가도록 페이지 수정! */
+  return <Dashboard experimentData={experimentData} onBack={() => setPage('form')} />;
 }
 
 export default App;

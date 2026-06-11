@@ -26,25 +26,21 @@ function parseApiResult(apiResult) {
   });
 
   const rows = [];
-  const seenPersonas = new Set();
 
   apiResult.responses.forEach((r, i) => {
+    if (r.question_id !== 0) return;
     if (!r.response && !r.selected_option) return;
     const persona = personaMap[r.persona_uuid] || {};
-
-    if (!seenPersonas.has(r.persona_uuid)) {
-      seenPersonas.add(r.persona_uuid);
-      rows.push({
-        persona_id: r.persona_uuid?.slice(0, 8) || `P${String(i).padStart(3, '0')}`,
-        age: persona.age || 0,
-        gender: persona.sex === '여자' ? '여' : persona.sex === '남자' ? '남' : persona.sex || '?',
-        region: persona.province || '?',
-        occupation: persona.occupation || '?',
-        response: r.response || r.selected_option || '',
-        cluster: r.cluster !== null && r.cluster !== undefined ? r.cluster : 0,
-        cluster_summary: r.cluster_summary || '분석 대기중',
-      });
-    }
+    rows.push({
+      persona_id: r.persona_uuid?.slice(0, 8) || `P${String(i).padStart(3, '0')}`,
+      age: persona.age || 0,
+      gender: persona.sex === '여자' ? '여' : persona.sex === '남자' ? '남' : persona.sex || '?',
+      region: persona.province || '?',
+      occupation: persona.occupation || '?',
+      response: r.response || r.selected_option || '',
+      cluster: r.cluster !== null && r.cluster !== undefined ? r.cluster : 0,
+      cluster_summary: r.cluster_summary || '분석 대기중',
+    });
   });
 
   return rows.length > 0 ? rows : null;
@@ -58,7 +54,7 @@ export default function Dashboard({ experimentData, onBack }) {
   const downloadPNG = async () => {
     const html2canvas = (await import('html2canvas')).default;
     const canvas = await html2canvas(dashboardRef.current, {
-      scale: 2,  // 2배 해상도
+      scale: 2,
       useCORS: true,
       scrollY: 0,
       windowWidth: dashboardRef.current.scrollWidth,
@@ -81,7 +77,7 @@ export default function Dashboard({ experimentData, onBack }) {
       windowHeight: dashboardRef.current.scrollHeight,
     });
     const imgData = canvas.toDataURL('image/png');
-    const pdf = new jsPDF('p', 'mm', 'a4');  // 세로 방향으로 변경
+    const pdf = new jsPDF('p', 'mm', 'a4');
     const pdfWidth = pdf.internal.pageSize.getWidth();
     const pdfHeight = pdf.internal.pageSize.getHeight();
     const imgWidth = canvas.width;
@@ -90,7 +86,6 @@ export default function Dashboard({ experimentData, onBack }) {
     const totalHeight = imgHeight / ratio;
     let position = 0;
 
-    // 여러 페이지로 나눠서 저장
     while (position < totalHeight) {
       pdf.addImage(imgData, 'PNG', 0, -position, pdfWidth, totalHeight);
       position += pdfHeight;
@@ -104,6 +99,7 @@ export default function Dashboard({ experimentData, onBack }) {
   const apiParsed = experimentData?.apiResult ? parseApiResult(experimentData.apiResult) : null;
   const baseData = apiParsed || dummyData;
   const isRealData = !!apiParsed;
+  const overallReport = experimentData?.apiResult?.overall_report;
 
   const filtered = baseData.filter(d =>
     (genderFilter === '전체' || d.gender === genderFilter) &&
@@ -138,204 +134,442 @@ export default function Dashboard({ experimentData, onBack }) {
 
   const allRegions = ['전체', ...new Set(baseData.map(d => d.region))];
 
-  const cardStyle = {
-    background: 'white', padding: '20px', borderRadius: '12px',
-    border: '1px solid #ebebeb',
-  };
-
-  const inputStyle = {
-    padding: '6px 12px', borderRadius: '8px',
-    border: '1px solid #ddd', fontSize: '13px', outline: 'none',
-    fontFamily: 'Noto Sans KR, sans-serif', color: '#111',
-  };
-
   return (
-    <div ref={dashboardRef} style={{
-      padding: '28px', fontFamily: 'Noto Sans KR, sans-serif',
-      background: '#ffffff', minHeight: '100vh',
-      maxWidth: '1100px', margin: '0 auto',
-    }}>
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;800&family=Inter:wght@500;700;800&display=swap');
 
-      <div style={{
-        background: 'white', borderRadius: '16px',
-        border: '1px solid #ebebeb', padding: '20px 24px',
-        marginBottom: '20px',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            <button onClick={onBack} style={{
-              background: 'none', border: 'none', cursor: 'pointer',
-              color: '#111', fontSize: '18px', padding: 0, lineHeight: 1
-            }}>←</button>
-            <h1 style={{ margin: 0, fontSize: '20px', fontWeight: '700', color: '#111' }}>
-              {experimentData?.experiment_title || '실험 결과'}
-            </h1>
+        * { box-sizing: border-box; }
+
+        .db-root {
+          min-height: 100vh;
+          font-family: 'Noto Sans KR', sans-serif;
+          color: #0f172a;
+          padding-bottom: 100px;
+          background-color: #f8fafc;
+          background-image: 
+            linear-gradient(to right, rgba(79, 70, 229, 0.03) 1px, transparent 1px),
+            linear-gradient(to bottom, rgba(79, 70, 229, 0.03) 1px, transparent 1px);
+          background-size: 32px 32px;
+        }
+
+        .lp-nav {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 20px 48px;
+          background: rgba(255, 255, 255, 0.6);
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+          border-bottom: 1px solid rgba(241, 245, 249, 0.8);
+          position: sticky;
+          top: 0;
+          z-index: 100;
+        }
+        .lp-nav-left {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          cursor: pointer;
+        }
+        .lp-logo-text {
+          display: flex;
+          flex-direction: column;
+          line-height: 1.1;
+        }
+        .lp-logo-title {
+          font-size: 20px;
+          font-weight: 800;
+          color: #0f172a;
+          letter-spacing: -0.02em;
+        }
+        .lp-logo-sub {
+          font-size: 10px;
+          color: #64748b;
+          font-weight: 500;
+        }
+        .lp-nav-right {
+          display: flex;
+          align-items: center;
+          gap: 32px;
+        }
+        .lp-nav-item {
+          font-size: 14px;
+          font-weight: 500;
+          color: #475569;
+          cursor: pointer;
+          transition: color 0.2s ease;
+        }
+        .lp-nav-item:hover { color: #4f46e5; }
+
+        .db-container {
+          max-width: 1140px;
+          margin: 40px auto 0 auto;
+          padding: 0 24px;
+        }
+
+        .db-header-card {
+          background: #ffffff;
+          border-radius: 20px;
+          border: 1px solid rgba(241, 245, 249, 0.9);
+          padding: 24px 28px;
+          margin-bottom: 24px;
+          box-shadow: 0 10px 25px rgba(15, 23, 42, 0.02);
+        }
+        .db-title-block {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-bottom: 16px;
+        }
+        .db-title-left {
+          display: flex;
+          align-items: center;
+          gap: 16px;
+        }
+        
+        .db-back-btn {
+          background: #ffffff;
+          border: 1px solid #e2e8f0;
+          border-radius: 50%;
+          width: 40px;
+          height: 40px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          color: #475569;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+          transition: all 0.2s ease;
+        }
+        .db-back-btn:hover {
+          background: #f1f5f9;
+          color: #4f46e5;
+          border-color: #cbd5e1;
+        }
+        .db-title-left h1 {
+          margin: 0; font-size: 22px; font-weight: 800; color: #0f172a; letter-spacing: -0.02em;
+        }
+        
+        .db-export-btn {
+          padding: 9px 18px; border-radius: 10px;
+          border: 1px solid #e2e8f0; background: #ffffff;
+          color: #475569; cursor: pointer; font-size: 13.5px;
+          font-family: inherit; font-weight: 600;
+          transition: all 0.2s ease;
+          display: inline-flex; align-items: center; gap: 6px;
+        }
+        .db-export-btn:hover {
+          background: #f8fafc; color: #0f172a; border-color: #cbd5e1;
+        }
+
+        .db-badge {
+          background: #f1f5f9; color: #475569;
+          padding: 5px 14px; border-radius: 99px; font-size: 12.5px; font-weight: 600;
+        }
+        .db-badge.primary { background: #e0e7ff; color: #4f46e5; }
+        .db-badge.warning { background: #fff3cd; color: #856404; }
+
+        .db-card {
+          background: #ffffff; padding: 26px; border-radius: 20px;
+          border: 1px solid rgba(241, 245, 249, 0.9);
+          box-shadow: 0 10px 25px rgba(15, 23, 42, 0.03);
+        }
+        .db-card h3 {
+          color: #0f172a; margin: 0 0 4px 0; font-size: 16px; font-weight: 800; letter-spacing: -0.01em;
+        }
+        .db-card-desc {
+          color: #64748b; font-size: 13px; margin: 0 0 24px 0;
+        }
+
+        .db-metrics-grid {
+          display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px;
+        }
+        .db-metric-item {
+          background: #ffffff; border-radius: 18px; padding: 20px; text-align: center;
+          border: 1px solid rgba(241, 245, 249, 0.9);
+          box-shadow: 0 8px 20px rgba(15, 23, 42, 0.02);
+        }
+        .db-metric-label { color: #64748b; margin: 0 0 6px 0; font-size: 13px; font-weight: 500; }
+        .db-metric-value { font-size: 26px; font-weight: 800; color: #4f46e5; margin: 0; letter-spacing: -0.02em; }
+
+        .db-filter-bar {
+          background: #ffffff; padding: 18px 24px; border-radius: 16px;
+          border: 1px solid rgba(241, 245, 249, 0.9);
+          box-shadow: 0 8px 20px rgba(15, 23, 42, 0.02);
+          display: flex; gap: 28px; margin-bottom: 24px; align-items: center; flex-wrap: wrap;
+        }
+        .db-filter-group { display: flex; align-items: center; gap: 10px; }
+        .db-filter-label { font-size: 13.5px; font-weight: 700; color: #334155; }
+        
+        .db-chip-btn {
+          padding: 6px 16px; border-radius: 99px; border: 1px solid #e2e8f0;
+          cursor: pointer; font-size: 13px; font-weight: 500; font-family: inherit;
+          background: #ffffff; color: #475569; transition: all 0.2s ease;
+        }
+        .db-chip-btn:hover { background: #f1f5f9; }
+        .db-chip-btn.active {
+          background: linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%);
+          color: #ffffff; border: none; font-weight: 600;
+          box-shadow: 0 4px 10px rgba(79, 70, 229, 0.2);
+        }
+
+        .db-select {
+          padding: 6px 16px; border-radius: 10px; border: 1px solid #e2e8f0;
+          font-size: 13.5px; outline: none; background: #f8fafc; color: #0f172a;
+          font-family: inherit; transition: all 0.2s;
+        }
+        .db-select:focus { border-color: #4f46e5; background: #fff; }
+
+        .db-charts-grid {
+          display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px;
+        }
+
+        .db-table-wrapper { background: #ffffff; overflow-x: auto; margin-bottom: 24px; }
+        .db-table { width: 100%; border-collapse: collapse; font-size: 14px; text-align: left; }
+        .db-table th {
+          padding: 14px 16px; background: #f8fafc; border-bottom: 2px solid #e2e8f0;
+          color: #475569; font-weight: 700; font-size: 13px;
+        }
+        .db-table td { padding: 14px 16px; border-bottom: 1px solid #f1f5f9; color: #334155; }
+        
+        .db-cluster-pill {
+          background: #f5f3ff; color: #7c3aed; padding: 4px 10px;
+          border-radius: 8px; font-size: 12.5px; font-weight: 600; display: inline-block;
+        }
+
+        @media (max-width: 900px) {
+          .db-metrics-grid { grid-template-columns: repeat(2, 1fr); }
+          .db-charts-grid { grid-template-columns: 1fr; }
+          .lp-nav { padding: 20px 24px; }
+        }
+      `}</style>
+
+      <div className="db-root">
+        {/* 네비게이션 */}
+        <nav className="lp-nav">
+          <div className="lp-nav-left" onClick={onBack}>
+            <Logo size={42} />
+            <div className="lp-logo-text">
+              <span className="lp-logo-title">K-Persona Lab</span>
+              <span className="lp-logo-sub">for virtual user research</span>
+            </div>
           </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button onClick={downloadPNG} style={{
-              padding: '8px 16px', borderRadius: '8px',
-              border: '1px solid #ddd', background: 'white',
-              color: '#111', cursor: 'pointer', fontSize: '13px',
-              fontFamily: 'Noto Sans KR, sans-serif', fontWeight: '500',
-            }}>↓ PNG</button>
-            <button onClick={downloadPDF} style={{
-              padding: '8px 16px', borderRadius: '8px',
-              border: '1px solid #ddd', background: 'white',
-              color: '#111', cursor: 'pointer', fontSize: '13px',
-              fontFamily: 'Noto Sans KR, sans-serif', fontWeight: '500',
-            }}>↓ PDF</button>
+          <div className="lp-nav-right">
+            <span className="lp-nav-item" onClick={onBack}>홈</span>
+            <span className="lp-nav-item" style={{ color: '#4f46e5', fontWeight: '700' }}>실험하기</span>
           </div>
-        </div>
-        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-          {[
-            experimentData?.experiment_type,
-            `응답자 ${filtered.length}명`,
-            `군집 ${new Set(filtered.map(d => d.cluster_summary)).size}개`
-          ].filter(Boolean).map((tag, i) => (
-            <span key={i} style={{
-              background: '#f5f5f5', color: '#555',
-              padding: '4px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: '500'
-            }}>{tag}</span>
-          ))}
-          {!isRealData && (
-            <span style={{
-              background: '#fff3cd', color: '#856404',
-              padding: '4px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: '500'
-            }}>더미 데이터</span>
+        </nav>
+
+        {/* 대시보드 스페이스 */}
+        <div className="db-container" ref={dashboardRef}>
+          
+          {/* 헤더 보드 */}
+          <div className="db-header-card">
+            <div className="db-title-block">
+              <div className="db-title-left">
+                <button onClick={onBack} className="db-back-btn">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M16 20L8 12L16 4" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </button>
+                <h1>{experimentData?.experiment_title || '실험 결과 분석 대시보드'}</h1>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button onClick={downloadPNG} className="db-export-btn">↓ PNG 저장</button>
+                <button onClick={downloadPDF} className="db-export-btn">↓ PDF 인쇄</button>
+              </div>
+            </div>
+            
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {experimentData?.experiment_type && (
+                <span className="db-badge interstate primary">{experimentData.experiment_type}</span>
+              )}
+              <span className="db-badge">응답자 {filtered.length}명</span>
+              <span className="db-badge">군집 {new Set(filtered.map(d => d.cluster_summary)).size}개</span>
+              {!isRealData && <span className="db-badge warning">시뮬레이션 데이터</span>}
+            </div>
+          </div>
+
+          {/* AI 리포트 요약 블록 */}
+          {overallReport && (
+            <div className="db-card" style={{
+              marginBottom: '24px',
+              background: 'linear-gradient(135deg, #f5f3ff 0%, #ffffff 100%)',
+              borderLeft: '5px solid #7c3aed',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                <span style={{
+                  background: 'linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%)', 
+                  color: '#fff', fontSize: '11px',
+                  padding: '4px 10px', borderRadius: '6px', fontWeight: 'bold'
+                }}>AI INSIGHT</span>
+                <h3 style={{ fontSize: '16px', fontWeight: '800' }}>전체 종합 리포트 요약</h3>
+              </div>
+              <p style={{ margin: 0, fontSize: '14.5px', color: '#334155', lineHeight: '1.8', whiteSpace: 'pre-wrap' }}>
+                {overallReport}
+              </p>
+            </div>
           )}
-        </div>
-      </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '20px' }}>
-        {[
-          { label: '총 페르소나', value: filtered.length + '명' },
-          { label: '군집 수', value: new Set(filtered.map(d => d.cluster_summary)).size + '개' },
-          { label: '평균 나이', value: (filtered.reduce((s, d) => s + d.age, 0) / (filtered.length || 1)).toFixed(1) + '세' },
-          { label: '지역 수', value: new Set(filtered.map(d => d.region)).size + '개' },
-        ].map(card => (
-          <div key={card.label} style={{ ...cardStyle, textAlign: 'center', padding: '16px' }}>
-            <p style={{ color: '#999', margin: '0 0 6px', fontSize: '12px' }}>{card.label}</p>
-            <p style={{ fontSize: '24px', fontWeight: '700', color: '#111', margin: 0 }}>{card.value}</p>
+          {/* 4열 스코어보드 */}
+          <div className="db-metrics-grid">
+            {[
+              { label: '총 페르소나 패널', value: filtered.length + ' 명' },
+              { label: '매핑된 소셜 군집', value: new Set(filtered.map(d => d.cluster_summary)).size + ' 개' },
+              { label: '패널 평균 나이', value: (filtered.reduce((s, d) => s + d.age, 0) / (filtered.length || 1)).toFixed(1) + ' 세' },
+              { label: '커버리지 지역 수', value: new Set(filtered.map(d => d.region)).size + ' 개' },
+            ].map((card, idx) => (
+              <div key={idx} className="db-metric-item">
+                <p className="db-metric-label">{card.label}</p>
+                <p className="db-metric-value">{card.value}</p>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
 
-      <div style={{ ...cardStyle, display: 'flex', gap: '20px', marginBottom: '20px', alignItems: 'center', flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontSize: '13px', fontWeight: '600', color: '#111' }}>성별</span>
-          {['전체', '남', '여'].map(g => (
-            <button key={g} onClick={() => setGenderFilter(g)} style={{
-              padding: '5px 14px', borderRadius: '20px',
-              border: genderFilter === g ? 'none' : '1px solid #ddd',
-              cursor: 'pointer', fontSize: '13px',
-              fontFamily: 'Noto Sans KR, sans-serif',
-              background: genderFilter === g ? '#111' : '#fff',
-              color: genderFilter === g ? 'white' : '#555',
-              fontWeight: genderFilter === g ? '600' : '400',
-            }}>{g}</button>
-          ))}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontSize: '13px', fontWeight: '600', color: '#111' }}>지역</span>
-          <select value={regionFilter} onChange={e => setRegionFilter(e.target.value)} style={inputStyle}>
-            {allRegions.map(r => <option key={r}>{r}</option>)}
-          </select>
-        </div>
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '20px' }}>
-        <div style={cardStyle}>
-          <h3 style={{ color: '#111', marginTop: 0, fontSize: '15px', fontWeight: '700' }}>군집별 응답자 수</h3>
-          <p style={{ color: '#999', fontSize: '12px', marginTop: '-12px', marginBottom: '16px' }}>각 군집에 속한 페르소나 수를 나타냅니다</p>
-          <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={clusterCounts}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f5f5f5" />
-              <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#999' }} />
-              <YAxis tick={{ fontSize: 11, fill: '#999' }} />
-              <Tooltip />
-              <Bar dataKey="count" fill="#111" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-        <div style={cardStyle}>
-          <h3 style={{ color: '#111', marginTop: 0, fontSize: '15px', fontWeight: '700' }}>성별 분포</h3>
-          <p style={{ color: '#999', fontSize: '12px', marginTop: '-12px', marginBottom: '16px' }}>응답자의 성별 비율</p>
-          <ResponsiveContainer width="100%" height={240}>
-            <PieChart>
-              <Pie data={genderCounts} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90}
-                label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
-                {genderCounts.map((_, i) => <Cell key={i} fill={['#111', '#888'][i % 2]} />)}
-              </Pie>
-              <Tooltip />
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      <div style={{ ...cardStyle, marginBottom: '20px', overflowX: 'auto' }}>
-        <h3 style={{ color: '#111', marginTop: 0, fontSize: '15px', fontWeight: '700' }}>지역 × 군집 분포</h3>
-        <p style={{ color: '#999', fontSize: '12px', marginTop: '-12px', marginBottom: '16px' }}>각 지역별 군집 분포를 보여주는 히트맵</p>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-          <thead>
-            <tr>
-              <th style={{ padding: '8px', background: '#f8f8f8', borderBottom: '2px solid #ebebeb', textAlign: 'left', color: '#555' }}>지역</th>
-              {clusters.map(c => (
-                <th key={c} style={{ padding: '8px', background: '#f8f8f8', borderBottom: '2px solid #ebebeb', textAlign: 'center', fontSize: '11px', color: '#555' }}>{c}</th>
+          {/* 필터 컨트롤러 */}
+          <div className="db-filter-bar">
+            <div className="db-filter-group">
+              <span className="db-filter-label">성별 필터</span>
+              {['전체', '남', '여'].map(g => (
+                <button key={g} onClick={() => setGenderFilter(g)} 
+                  className={`db-chip-btn ${genderFilter === g ? 'active' : ''}`}>
+                  {g}
+                </button>
               ))}
-            </tr>
-          </thead>
-          <tbody>
-            {heatmapData.map((row, i) => (
-              <tr key={i}>
-                <td style={{ padding: '8px', fontWeight: '600', color: '#111', borderBottom: '1px solid #f5f5f5' }}>{row.region}</td>
-                {clusters.map(c => {
-                  const val = row[c] || 0;
-                  const opacity = val === 0 ? 0.05 : val / 3;
-                  return (
-                    <td key={c} style={{
-                      padding: '8px', textAlign: 'center', borderBottom: '1px solid #f5f5f5',
-                      background: `rgba(0, 0, 0, ${opacity})`,
-                      fontWeight: val > 0 ? '600' : '400',
-                      color: val > 0 ? '#111' : '#ccc'
-                    }}>{val}</td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </div>
+            <div className="db-filter-group">
+              <span className="db-filter-label">지역 세부 필터</span>
+              <select value={regionFilter} onChange={e => setRegionFilter(e.target.value)} className="db-select">
+                {allRegions.map(r => <option key={r}>{r}</option>)}
+              </select>
+            </div>
+          </div>
 
-      <div style={{ ...cardStyle, overflowX: 'auto', marginBottom: '20px' }}>
-        <h3 style={{ color: '#111', marginTop: 0, fontSize: '15px', fontWeight: '700' }}>페르소나 응답 데이터</h3>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr style={{ background: '#f8f8f8' }}>
-              {['ID', '나이', '성별', '지역', '군집', '응답'].map(h => (
-                <th key={h} style={{ padding: '12px', textAlign: 'left', borderBottom: '2px solid #ebebeb', color: '#555', fontSize: '13px' }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((d, i) => (
-              <tr key={i} style={{ borderBottom: '1px solid #f5f5f5' }}>
-                <td style={{ padding: '12px', fontSize: '13px', color: '#999' }}>{d.persona_id}</td>
-                <td style={{ padding: '12px', fontSize: '13px', color: '#111' }}>{d.age}</td>
-                <td style={{ padding: '12px', fontSize: '13px', color: '#111' }}>{d.gender}</td>
-                <td style={{ padding: '12px', fontSize: '13px', color: '#111' }}>{d.region}</td>
-                <td style={{ padding: '12px' }}>
-                  <span style={{
-                    background: '#f5f5f5', color: '#111',
-                    padding: '4px 10px', borderRadius: '12px', fontSize: '12px', fontWeight: '500'
-                  }}>{d.cluster_summary}</span>
-                </td>
-                <td style={{ padding: '12px', fontSize: '13px', color: '#555' }}>{d.response}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+          {/* 시각화 2열 구조 */}
+          <div className="db-charts-grid">
+            {/* 바 차트 */}
+            <div className="db-card">
+              <h3>군집별 가상 응답자 분포</h3>
+              <p className="db-card-desc">각 가상 페르소나 모델의 클러스터 편제 규모를 계측합니다</p>
+              <ResponsiveContainer width="100%" height={240}>
+                <BarChart data={clusterCounts} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#64748b', fontWeight: 500 }} />
+                  <YAxis tick={{ fontSize: 11, fill: '#64748b' }} />
+                  <Tooltip />
+                  <Bar dataKey="count" fill="#4f46e5" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
 
-    </div>
+            {/* 원형(파이) 차트 - ★ 검은색 버그 완벽 수정 ★ */}
+            <div className="db-card">
+              <h3>리서치 패널 성별 분포</h3>
+              <p className="db-card-desc">조건에 맞춰 로딩된 가상 오디언스의 성별 파이 비율</p>
+              <ResponsiveContainer width="100%" height={240}>
+                <PieChart>
+                  <Pie 
+                    data={genderCounts} 
+                    dataKey="value" 
+                    nameKey="name" 
+                    cx="50%" 
+                    cy="50%" 
+                    outerRadius={85}
+                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                  >
+                    {/* 성별 텍스트 매칭을 통해 남성은 인디고, 여성은 보라색 확정 부여 */}
+                    {genderCounts.map((entry, i) => (
+                      <Cell 
+                        key={i} 
+                        fill={entry.name === '남' ? '#4f46e5' : '#7c3aed'} 
+                      />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* 히트맵 매트릭스 */}
+          <div className="db-card" style={{ marginBottom: '24px' }}>
+            <h3>지역 × 군집 교차 분포 (Heatmap)</h3>
+            <p className="db-card-desc">지역과 소셜 페르소나 군집 간의 가중치 밀도 분석 행렬</p>
+            <div className="db-table-wrapper" style={{ margin: 0 }}>
+              <table className="db-table">
+                <thead>
+                  <tr>
+                    <th style={{ width: '120px' }}>지역구분</th>
+                    {clusters.map(c => <th key={c} style={{ textAlign: 'center' }}>{c}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {heatmapData.map((row, i) => (
+                    <tr key={i}>
+                      <td style={{ fontWeight: '700', color: '#0f172a' }}>{row.region}</td>
+                      {clusters.map(c => {
+                        const val = row[c] || 0;
+                        const opacity = val === 0 ? 0.02 : Math.min(val / 3, 1);
+                        return (
+                          <td key={c} style={{
+                            textAlign: 'center',
+                            background: `rgba(79, 70, 229, ${opacity})`,
+                            fontWeight: val > 0 ? '700' : '400',
+                            color: val > 0 ? '#4f46e5' : '#cbd5e1'
+                          }}>{val}</td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* 상세 데이터 원장 */}
+          <div className="db-card">
+            <h3>페르소나별 상세 응답 데이터</h3>
+            <p className="db-card-desc">리서치에 참여한 가상 객체별 인구통계학적 지표 및 원본 텍스트 데이터</p>
+            <div className="db-table-wrapper" style={{ margin: 0 }}>
+              <table className="db-table">
+                <thead>
+                  <tr>
+                    {['패널 ID', '나이', '성별', '지역', '소셜 군집 매핑', '리서치 서베이 핵심 답변'].map(h => <th key={h}>{h}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((d, i) => (
+                    <tr key={i}>
+                      <td style={{ color: '#94a3b8', fontFamily: 'monospace' }}>{d.persona_id}</td>
+                      <td style={{ fontWeight: '600' }}>{d.age}세</td>
+                      <td>{d.gender}</td>
+                      <td>{d.region}</td>
+                      <td>
+                        <span className="db-cluster-pill">{d.cluster_summary}</span>
+                      </td>
+                      <td style={{ color: '#475569', maxWidth: '400px', lineHeight: '1.5' }}>{d.response}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </>
   );
 }
+
+const Logo = ({ size = 42 }) => (
+  <svg width={size} height={size} viewBox="0 0 44 44" fill="none">
+    <circle cx="22" cy="22" r="20" stroke="#4f46e5" strokeWidth="2.5" fill="#f5f3ff"/>
+    <path d="M16 13 V31 M16 22 L29 13 M16 22 L29 31" stroke="#4f46e5" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"/>
+    <circle cx="29" cy="13" r="3" fill="#7c3aed"/>
+    <circle cx="29" cy="31" r="3" fill="#7c3aed"/>
+    <circle cx="16" cy="22" r="3" fill="#4f46e5"/>
+    <circle cx="16" cy="13" r="3" fill="#4f46e5"/>
+    <circle cx="16" cy="31" r="3" fill="#4f46e5"/>
+  </svg>
+);
