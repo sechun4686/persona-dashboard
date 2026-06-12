@@ -101,6 +101,12 @@ export default function Dashboard({ experimentData, onBack }) {
   const isRealData = !!apiParsed;
   const overallReport = experimentData?.apiResult?.overall_report;
 
+  // 백엔드 분석에서 넘어온 다양성 측정 값 (없으면 null → 화면에 '-' 표시)
+  const diversityMetrics = experimentData?.apiResult?.diversity_metrics || {
+    semantic_diversity_score: null,
+    opinion_distribution_score: null
+  };
+
   const filtered = baseData.filter(d =>
     (genderFilter === '전체' || d.gender === genderFilter) &&
     (regionFilter === '전체' || d.region === regionFilter)
@@ -282,16 +288,29 @@ export default function Dashboard({ experimentData, onBack }) {
           color: #64748b; font-size: 13px; margin: 0 0 24px 0;
         }
 
+        /* 3열 격자(다양성 스코어 배치 최적화) */
         .db-metrics-grid {
-          display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px;
+          display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px;
         }
         .db-metric-item {
-          background: #ffffff; border-radius: 18px; padding: 20px; text-align: center;
+          background: #ffffff; border-radius: 18px; padding: 22px; text-align: center;
           border: 1px solid rgba(241, 245, 249, 0.9);
           box-shadow: 0 8px 20px rgba(15, 23, 42, 0.02);
+          display: flex; flex-direction: column; justify-content: center;
         }
-        .db-metric-label { color: #64748b; margin: 0 0 6px 0; font-size: 13px; font-weight: 500; }
+        .db-metric-label { color: #64748b; margin: 0 0 8px 0; font-size: 13.5px; font-weight: 600; }
         .db-metric-value { font-size: 26px; font-weight: 800; color: #4f46e5; margin: 0; letter-spacing: -0.02em; }
+
+        /* 다양성 지표 전용 하이라이팅 */
+        .db-metric-item.highlight {
+          background: linear-gradient(135deg, #f5f3ff 0%, #ffffff 100%);
+          border-color: rgba(124, 58, 237, 0.3);
+        }
+        .db-metric-item.highlight .db-metric-value {
+          background: linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%);
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+        }
 
         .db-filter-bar {
           background: #ffffff; padding: 18px 24px; border-radius: 16px;
@@ -339,7 +358,7 @@ export default function Dashboard({ experimentData, onBack }) {
         }
 
         @media (max-width: 900px) {
-          .db-metrics-grid { grid-template-columns: repeat(2, 1fr); }
+          .db-metrics-grid { grid-template-columns: 1fr; }
           .db-charts-grid { grid-template-columns: 1fr; }
           .lp-nav { padding: 20px 24px; }
         }
@@ -361,10 +380,10 @@ export default function Dashboard({ experimentData, onBack }) {
           </div>
         </nav>
 
-        {/* 대시보드 스페이스 */}
+        {/* 대시보드 메인 본문 */}
         <div className="db-container" ref={dashboardRef}>
           
-          {/* 헤더 보드 */}
+          {/* 타이틀 헤더 */}
           <div className="db-header-card">
             <div className="db-title-block">
               <div className="db-title-left">
@@ -383,7 +402,7 @@ export default function Dashboard({ experimentData, onBack }) {
             
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               {experimentData?.experiment_type && (
-                <span className="db-badge interstate primary">{experimentData.experiment_type}</span>
+                <span className="db-badge primary">{experimentData.experiment_type}</span>
               )}
               <span className="db-badge">응답자 {filtered.length}명</span>
               <span className="db-badge">군집 {new Set(filtered.map(d => d.cluster_summary)).size}개</span>
@@ -412,22 +431,43 @@ export default function Dashboard({ experimentData, onBack }) {
             </div>
           )}
 
-          {/* 4열 스코어보드 */}
+          {/* 6단 메트릭스 보드 */}
           <div className="db-metrics-grid">
-            {[
-              { label: '총 페르소나 패널', value: filtered.length + ' 명' },
-              { label: '매핑된 소셜 군집', value: new Set(filtered.map(d => d.cluster_summary)).size + ' 개' },
-              { label: '패널 평균 나이', value: (filtered.reduce((s, d) => s + d.age, 0) / (filtered.length || 1)).toFixed(1) + ' 세' },
-              { label: '커버리지 지역 수', value: new Set(filtered.map(d => d.region)).size + ' 개' },
-            ].map((card, idx) => (
-              <div key={idx} className="db-metric-item">
-                <p className="db-metric-label">{card.label}</p>
-                <p className="db-metric-value">{card.value}</p>
-              </div>
-            ))}
+            <div className="db-metric-item">
+              <p className="db-metric-label">총 페르소나 패널</p>
+              <p className="db-metric-value">{filtered.length} 명</p>
+            </div>
+            <div className="db-metric-item">
+              <p className="db-metric-label">매핑된 소셜 군집</p>
+              <p className="db-metric-value">{new Set(filtered.map(d => d.cluster_summary)).size} 개</p>
+            </div>
+            <div className="db-metric-item">
+              <p className="db-metric-label">패널 평균 나이</p>
+              <p className="db-metric-value">{(filtered.reduce((s, d) => s + d.age, 0) / (filtered.length || 1)).toFixed(1)} 세</p>
+            </div>
+            
+            {/* [팀원 5 핵심 지표 1] 의미적 다양성 점수 */}
+            <div className="db-metric-item highlight">
+              <p className="db-metric-label">의미적 응답 다양성 (Semantic)</p>
+              <p className="db-metric-value">
+                {diversityMetrics.semantic_diversity_score != null ? `${diversityMetrics.semantic_diversity_score} %` : '-'}
+              </p>
+            </div>
+            {/* [팀원 5 핵심 지표 2] 섀넌 엔트로피 기반 의견 분산도 점수 */}
+            <div className="db-metric-item highlight">
+              <p className="db-metric-label">의견 분산 균등도 (Entropy)</p>
+              <p className="db-metric-value">
+                {diversityMetrics.opinion_distribution_score != null ? `${diversityMetrics.opinion_distribution_score} %` : '-'}
+              </p>
+            </div>
+            
+            <div className="db-metric-item">
+              <p className="db-metric-label">커버리지 지역 수</p>
+              <p className="db-metric-value">{new Set(filtered.map(d => d.region)).size} 개</p>
+            </div>
           </div>
 
-          {/* 필터 컨트롤러 */}
+          {/* 필터 세션 */}
           <div className="db-filter-bar">
             <div className="db-filter-group">
               <span className="db-filter-label">성별 필터</span>
@@ -446,9 +486,8 @@ export default function Dashboard({ experimentData, onBack }) {
             </div>
           </div>
 
-          {/* 시각화 2열 구조 */}
+          {/* 차트 시각화 레이어 */}
           <div className="db-charts-grid">
-            {/* 바 차트 */}
             <div className="db-card">
               <h3>군집별 가상 응답자 분포</h3>
               <p className="db-card-desc">각 가상 페르소나 모델의 클러스터 편제 규모를 계측합니다</p>
@@ -463,7 +502,6 @@ export default function Dashboard({ experimentData, onBack }) {
               </ResponsiveContainer>
             </div>
 
-            {/* 원형(파이) 차트 - ★ 검은색 버그 완벽 수정 ★ */}
             <div className="db-card">
               <h3>리서치 패널 성별 분포</h3>
               <p className="db-card-desc">조건에 맞춰 로딩된 가상 오디언스의 성별 파이 비율</p>
@@ -478,7 +516,6 @@ export default function Dashboard({ experimentData, onBack }) {
                     outerRadius={85}
                     label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
                   >
-                    {/* 성별 텍스트 매칭을 통해 남성은 인디고, 여성은 보라색 확정 부여 */}
                     {genderCounts.map((entry, i) => (
                       <Cell 
                         key={i} 
@@ -492,7 +529,7 @@ export default function Dashboard({ experimentData, onBack }) {
             </div>
           </div>
 
-          {/* 히트맵 매트릭스 */}
+          {/* 히트맵 데이터 보드 */}
           <div className="db-card" style={{ marginBottom: '24px' }}>
             <h3>지역 × 군집 교차 분포 (Heatmap)</h3>
             <p className="db-card-desc">지역과 소셜 페르소나 군집 간의 가중치 밀도 분석 행렬</p>
@@ -511,12 +548,14 @@ export default function Dashboard({ experimentData, onBack }) {
                       {clusters.map(c => {
                         const val = row[c] || 0;
                         const opacity = val === 0 ? 0.02 : Math.min(val / 3, 1);
+                        const isDarkBg = val >= 2;
                         return (
                           <td key={c} style={{
                             textAlign: 'center',
                             background: `rgba(79, 70, 229, ${opacity})`,
                             fontWeight: val > 0 ? '700' : '400',
-                            color: val > 0 ? '#4f46e5' : '#cbd5e1'
+                            color: val === 0 ? '#cbd5e1' : (isDarkBg ? '#ffffff' : '#4f46e5'),
+                            transition: 'all 0.2s ease'
                           }}>{val}</td>
                         );
                       })}
@@ -527,7 +566,7 @@ export default function Dashboard({ experimentData, onBack }) {
             </div>
           </div>
 
-          {/* 상세 데이터 원장 */}
+          {/* 원장 테이블 원본 */}
           <div className="db-card">
             <h3>페르소나별 상세 응답 데이터</h3>
             <p className="db-card-desc">리서치에 참여한 가상 객체별 인구통계학적 지표 및 원본 텍스트 데이터</p>
