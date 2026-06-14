@@ -17,6 +17,8 @@ const dummyData = [
   { persona_id: 'P010', age: 35, gender: '남', region: '서울', occupation: '개발자', response: '뉴스는 포털 앱으로만 봐요.', cluster: 2, cluster_summary: '디지털 몰입형 미니멀콘' },
 ];
 
+const INVALID_RESPONSES = new Set(['(응답 없음)', 'No response', '응답 없음', '']);
+
 function parseApiResult(apiResult) {
   if (!apiResult || !apiResult.personas || !apiResult.responses) return null;
   const personaMap = {};
@@ -24,6 +26,9 @@ function parseApiResult(apiResult) {
   const rows = [];
   apiResult.responses.forEach((r, i) => {
     if (r.question_id !== 0) return;
+    const resp = r.response || r.selected_option;
+    // 유효 응답만 포함 — null/빈값/알려진 무효 문자열 제외
+    if (!resp || INVALID_RESPONSES.has(resp.trim())) return;
     const persona = personaMap[r.persona_uuid] || {};
     rows.push({
       persona_id: r.persona_uuid?.slice(0, 8) || `P${String(i).padStart(3, '0')}`,
@@ -31,12 +36,13 @@ function parseApiResult(apiResult) {
       gender: persona.sex === '여자' ? '여' : persona.sex === '남자' ? '남' : persona.sex || '?',
       region: persona.province || '?',
       occupation: persona.occupation || '?',
-      response: r.response || r.selected_option || '(응답 없음)',
+      response: resp,
       cluster: r.cluster !== null && r.cluster !== undefined ? r.cluster : 0,
-      cluster_summary: r.cluster_summary || '분석 대기중',
+      cluster_summary: r.cluster_summary || null,
     });
   });
-  return rows.length > 0 ? rows : null;
+  // apiResult가 존재하면 실제 데이터이므로 빈 배열이라도 반환 (dummyData 낙오 방지)
+  return rows;
 }
 
 // ── color palette (purple theme complements) ──
@@ -46,8 +52,10 @@ const CLUSTER_BG    = ['#e0e7ff', '#f3e8ff', '#dbeafe', '#cffafe', '#d1fae5'];
 function groupByCluster(data) {
   const map = {};
   data.forEach(d => {
-    if (!map[d.cluster_summary]) map[d.cluster_summary] = { name: d.cluster_summary, cluster: d.cluster, items: [] };
-    map[d.cluster_summary].items.push(d);
+    // cluster_summary가 null이거나 없으면 cluster_id 기반 임시 이름 사용
+    const key = d.cluster_summary || `의견 그룹 ${d.cluster + 1}`;
+    if (!map[key]) map[key] = { name: key, cluster: d.cluster, items: [] };
+    map[key].items.push(d);
   });
   return Object.values(map).sort((a, b) => b.items.length - a.items.length);
 }
@@ -110,14 +118,15 @@ function buildWhyClusters(apiResult, clusterCards) {
 }
 
 function getSemanticInterpretation(score) {
-  if (score == null) return '백엔드 분석 데이터가 없습니다.';
+  if (score === null || score === undefined) return '분석 데이터가 없습니다.';
   if (score < 30) return '응답들이 비교적 유사한 주제 안에서 세부 의견으로 나뉘었습니다.';
   if (score < 60) return '중간 수준 — 일부 이질적인 의견 그룹이 존재합니다.';
   return '응답들이 서로 다른 의미 영역에 넓게 분포했습니다.';
 }
 
 function getEntropyInterpretation(score) {
-  if (score == null) return '백엔드 분석 데이터가 없습니다.';
+  if (score === null || score === undefined) return '분석 데이터가 없습니다.';
+  if (score === 0) return '군집이 1개이므로 분산 없음 (단일 의견 집중).';
   if (score < 40) return '특정 군집에 의견이 집중되어 있습니다.';
   if (score < 70) return '군집 간 의견 분포가 다소 불균형합니다.';
   return '군집 간 의견이 비교적 균형 있게 분포했습니다.';
@@ -175,13 +184,18 @@ export default function Dashboard({ experimentData, onBack }) {
   };
 
   const apiParsed = experimentData?.apiResult ? parseApiResult(experimentData.apiResult) : null;
-  const baseData = apiParsed || dummyData;
-  const isRealData = !!apiParsed;
+  const isRealData = apiParsed !== null;
+  // 실제 실험 결과가 있으면 빈 배열이라도 dummyData로 낙오하지 않음
+  const baseData = isRealData ? (apiParsed.length > 0 ? apiParsed : []) : dummyData;
   const overallReport = experimentData?.apiResult?.overall_report;
-  const diversityMetrics = experimentData?.apiResult?.diversity_metrics || {
-    semantic_diversity_score: null,
-    opinion_distribution_score: null,
-  };
+  const diversityMetrics = experimentData?.apiResult?.diversity_metrics || {};
+  const experimentStats = isRealData ? {
+    n_requested:       experimentData.apiResult?.n_requested       ?? null,
+    valid_response_count:  experimentData.apiResult?.valid_response_count  ?? null,
+    failed_response_count: experimentData.apiResult?.failed_response_count ?? null,
+    retry_count:       experimentData.apiResult?.retry_count       ?? null,
+    replacement_count: experimentData.apiResult?.replacement_count ?? null,
+  } : null;
 
   // Derived / fallback data — safe with old result JSON
   const executiveSummary = buildExecutiveSummary(experimentData?.apiResult, baseData);
@@ -196,7 +210,7 @@ export default function Dashboard({ experimentData, onBack }) {
 
   // Table filters (cluster + keyword search, applied on top of demographic filters)
   const tableData = filtered.filter(d =>
-    (clusterFilter === '전체' || d.cluster_summary === clusterFilter) &&
+    (clusterFilter === '전체' || (d.cluster_summary && d.cluster_summary === clusterFilter)) &&
     (!tableSearch || d.response.includes(tableSearch) || d.persona_id.includes(tableSearch) || d.occupation.includes(tableSearch))
   );
 
@@ -216,8 +230,8 @@ export default function Dashboard({ experimentData, onBack }) {
     }, {})
   );
 
-  const regions = [...new Set(baseData.map(d => d.region))];
-  const clusters = [...new Set(baseData.map(d => d.cluster_summary))];
+  const regions = [...new Set(baseData.map(d => d.region).filter(Boolean))];
+  const clusters = [...new Set(baseData.map(d => d.cluster_summary).filter(Boolean))];
   const heatmapData = regions.map(region => {
     const row = { region };
     clusters.forEach(cluster => {
@@ -226,8 +240,8 @@ export default function Dashboard({ experimentData, onBack }) {
     return row;
   });
 
-  const allRegions  = ['전체', ...new Set(baseData.map(d => d.region))];
-  const allClusters = ['전체', ...new Set(baseData.map(d => d.cluster_summary))];
+  const allRegions  = ['전체', ...new Set(baseData.map(d => d.region).filter(Boolean))];
+  const allClusters = ['전체', ...new Set(baseData.map(d => d.cluster_summary).filter(Boolean))];
 
   const toggleRow = (idx) => {
     setExpandedRows(prev => {
@@ -562,10 +576,40 @@ export default function Dashboard({ experimentData, onBack }) {
               {experimentData?.experiment_type && (
                 <span className="db-badge primary">{experimentData.experiment_type}</span>
               )}
-              <span className="db-badge">응답자 {filtered.length}명</span>
-              <span className="db-badge">군집 {new Set(filtered.map(d => d.cluster_summary)).size}개</span>
+              <span className="db-badge">
+                유효 응답 {isRealData ? (experimentStats?.valid_response_count ?? baseData.length) : baseData.length}
+                {experimentStats?.n_requested !== null && experimentStats?.n_requested !== undefined
+                  ? ` / 요청 ${experimentStats.n_requested}명` : '명'}
+              </span>
+              <span className="db-badge">
+                군집 {diversityMetrics?.cluster_count !== null && diversityMetrics?.cluster_count !== undefined
+                  ? diversityMetrics.cluster_count
+                  : new Set(baseData.map(d => d.cluster_summary).filter(Boolean)).size}개
+              </span>
               {!isRealData && <span className="db-badge warning">시뮬레이션 데이터</span>}
             </div>
+            {/* 실험 실행 통계 (실제 데이터일 때만 표시) */}
+            {isRealData && experimentStats && (
+              <div style={{
+                display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '12px',
+                padding: '10px 14px', background: '#f8fafc', borderRadius: '10px',
+                border: '1px solid #f1f5f9', fontSize: '12.5px',
+              }}>
+                {[
+                  { label: '요청', value: experimentStats.n_requested, unit: '명' },
+                  { label: '유효', value: experimentStats.valid_response_count, unit: '명', color: '#059669' },
+                  { label: '실패', value: experimentStats.failed_response_count, unit: '명', color: experimentStats.failed_response_count > 0 ? '#dc2626' : '#94a3b8' },
+                  { label: '재시도', value: experimentStats.retry_count, unit: '회' },
+                  { label: '대체 페르소나', value: experimentStats.replacement_count, unit: '명' },
+                ].map(({ label, value, unit, color }) => (
+                  value !== null && value !== undefined && (
+                    <span key={label} style={{ color: color || '#475569', fontWeight: '600' }}>
+                      {label}&nbsp;<strong style={{ color: color || '#0f172a' }}>{value}{unit}</strong>
+                    </span>
+                  )
+                ))}
+              </div>
+            )}
 
             {experimentData?.images?.some(img => img.url) && (
               <div className="db-ab-images">
@@ -617,35 +661,49 @@ export default function Dashboard({ experimentData, onBack }) {
           {/* ─────────────────── 3. METRICS ─────────────────── */}
           <div className="db-metrics-grid">
             <div className="db-metric-item">
-              <p className="db-metric-label">총 페르소나 패널</p>
+              <p className="db-metric-label">유효 응답 패널</p>
               <p className="db-metric-value">{filtered.length} 명</p>
-              <p className="db-metric-interp">가상 패널이 포함한 응답자 수입니다.</p>
+              <p className="db-metric-interp">
+                {experimentStats?.n_requested !== null && experimentStats?.n_requested !== undefined
+                  ? `요청 ${experimentStats.n_requested}명 중 유효 응답 수입니다.`
+                  : '가상 패널이 포함한 응답자 수입니다.'}
+              </p>
             </div>
             <div className="db-metric-item">
               <p className="db-metric-label">매핑된 소셜 군집</p>
-              <p className="db-metric-value">{new Set(filtered.map(d => d.cluster_summary)).size} 개</p>
+              <p className="db-metric-value">
+                {diversityMetrics?.cluster_count !== null && diversityMetrics?.cluster_count !== undefined
+                  ? diversityMetrics.cluster_count
+                  : new Set(filtered.map(d => d.cluster_summary).filter(Boolean)).size} 개
+              </p>
               <p className="db-metric-interp">K-means로 분류된 의견 그룹의 수입니다.</p>
             </div>
             <div className="db-metric-item">
               <p className="db-metric-label">패널 평균 나이</p>
               <p className="db-metric-value">
-                {(filtered.reduce((s, d) => s + d.age, 0) / (filtered.length || 1)).toFixed(1)} 세
+                {filtered.length > 0
+                  ? (filtered.reduce((s, d) => s + d.age, 0) / filtered.length).toFixed(1)
+                  : '—'} 세
               </p>
               <p className="db-metric-interp">현재 필터 조건 내 가상 패널의 평균 연령입니다.</p>
             </div>
             <div className="db-metric-item highlight">
               <p className="db-metric-label">의미적 응답 다양성 (Semantic)</p>
               <p className="db-metric-value">
-                {diversityMetrics.semantic_diversity_score != null ? `${diversityMetrics.semantic_diversity_score}%` : '—'}
+                {diversityMetrics?.semantic_diversity_score !== null && diversityMetrics?.semantic_diversity_score !== undefined
+                  ? `${diversityMetrics.semantic_diversity_score}%`
+                  : '—'}
               </p>
-              <p className="db-metric-interp">{getSemanticInterpretation(diversityMetrics.semantic_diversity_score)}</p>
+              <p className="db-metric-interp">{getSemanticInterpretation(diversityMetrics?.semantic_diversity_score ?? null)}</p>
             </div>
             <div className="db-metric-item highlight">
               <p className="db-metric-label">의견 분산 균등도 (Entropy)</p>
               <p className="db-metric-value">
-                {diversityMetrics.opinion_distribution_score != null ? `${diversityMetrics.opinion_distribution_score}%` : '—'}
+                {diversityMetrics?.opinion_distribution_score !== null && diversityMetrics?.opinion_distribution_score !== undefined
+                  ? `${diversityMetrics.opinion_distribution_score}%`
+                  : '—'}
               </p>
-              <p className="db-metric-interp">{getEntropyInterpretation(diversityMetrics.opinion_distribution_score)}</p>
+              <p className="db-metric-interp">{getEntropyInterpretation(diversityMetrics?.opinion_distribution_score ?? null)}</p>
             </div>
             <div className="db-metric-item">
               <p className="db-metric-label">커버리지 지역 수</p>
@@ -831,7 +889,7 @@ export default function Dashboard({ experimentData, onBack }) {
                     <p className="qc-quote">
                       "{c.representative_quote?.length > 160
                         ? c.representative_quote.slice(0, 160) + '...'
-                        : c.representative_quote || '응답 없음'}"
+                        : c.representative_quote || ''}"
                     </p>
                     {meta && (
                       <p className="qc-meta">{meta.age}세 · {meta.gender} · {meta.region} · {meta.occupation}</p>
@@ -901,7 +959,11 @@ export default function Dashboard({ experimentData, onBack }) {
                         <td style={{ fontWeight: '600' }}>{d.age}세</td>
                         <td>{d.gender}</td>
                         <td>{d.region}</td>
-                        <td><span className="db-cluster-pill">{d.cluster_summary}</span></td>
+                        <td>
+                          {d.cluster_summary
+                            ? <span className="db-cluster-pill">{d.cluster_summary}</span>
+                            : <span style={{ color: '#94a3b8', fontSize: '12px' }}>군집 {d.cluster + 1}</span>}
+                        </td>
                         <td>
                           {expanded
                             ? <span style={{ color: '#475569', lineHeight: '1.5' }}>{d.response}</span>
@@ -927,7 +989,10 @@ export default function Dashboard({ experimentData, onBack }) {
               </table>
             </div>
             <p style={{ margin: '10px 0 0 0', fontSize: '12.5px', color: '#94a3b8', textAlign: 'right' }}>
-              {tableData.length}개 응답 표시 중 (전체 {baseData.length}개)
+              {tableData.length}개 응답 표시 중
+              {experimentStats?.valid_response_count !== null && experimentStats?.valid_response_count !== undefined
+                ? ` (유효 ${experimentStats.valid_response_count}명 / 요청 ${experimentStats.n_requested}명)`
+                : ` (전체 ${baseData.length}개)`}
             </p>
           </div>
 
