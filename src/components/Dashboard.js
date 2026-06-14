@@ -57,6 +57,86 @@ function parseApiResult(apiResult) {
 const CLUSTER_COLORS = ['#4f46e5', '#7c3aed', '#2563eb', '#0891b2', '#059669'];
 const CLUSTER_BG    = ['#e0e7ff', '#f3e8ff', '#dbeafe', '#cffafe', '#d1fae5'];
 
+// ── Wide row builder: one row per persona, all Q responses ──
+function parseWideRows(apiResult) {
+  if (!apiResult || !apiResult.personas || !apiResult.responses) return [];
+  const personaMap = {};
+  apiResult.personas.forEach(p => { personaMap[p.persona_uuid] = p; });
+
+  // Group by persona
+  const byPersona = {};
+  apiResult.responses.forEach(r => {
+    if (!byPersona[r.persona_uuid]) byPersona[r.persona_uuid] = {};
+    byPersona[r.persona_uuid][r.question_id] = r;
+  });
+
+  const questions = apiResult.questions || [];
+  const primaryQId = apiResult.primary_question_id
+    ?? questions.find(q => q.question_type === '주관식' || q.question_type === 'subjective' || q.question_type === 'open_ended')?.question_id
+    ?? questions[0]?.question_id ?? 0;
+
+  const rows = [];
+  Object.entries(byPersona).forEach(([uuid, qMap]) => {
+    const primaryResp = qMap[primaryQId];
+    if (!primaryResp) return;
+    const persona = personaMap[uuid] || {};
+    const row = {
+      persona_id: uuid?.slice(0, 8) || '?',
+      age: persona.age || 0,
+      gender: persona.sex === '여자' ? '여' : persona.sex === '남자' ? '남' : persona.sex || '?',
+      region: persona.province || '?',
+      occupation: persona.occupation || '?',
+      cluster: primaryResp.cluster !== undefined && primaryResp.cluster !== null ? primaryResp.cluster : null,
+      cluster_summary: primaryResp.cluster_summary || null,
+      qResponses: {},
+    };
+    questions.forEach(q => {
+      const resp = qMap[q.question_id];
+      if (resp) {
+        row.qResponses[q.question_id] = {
+          question_type: q.question_type,
+          value: resp.selected_option || resp.response || null,
+          is_valid: resp.is_valid !== false,
+        };
+      }
+    });
+    rows.push(row);
+  });
+  return rows;
+}
+
+// ── Ground truth comparison metrics ──
+function calcGroundTruthMetrics(syntheticOptions, groundTruthMap) {
+  // syntheticOptions: [{option, count, percentage}]
+  // groundTruthMap: {option_text: percentage (0-100)}
+  const keys = syntheticOptions.map(o => o.option);
+  const s = keys.map(k => (syntheticOptions.find(o => o.option === k)?.percentage ?? 0) / 100);
+  const r = keys.map(k => (groundTruthMap[k] ?? 0) / 100);
+  const totalR = r.reduce((a, b) => a + b, 0);
+  const rNorm = totalR > 0 ? r.map(v => v / totalR) : r;
+
+  const tvd = s.reduce((sum, si, i) => sum + Math.abs(si - rNorm[i]), 0) / 2;
+  const distSim = Math.round((1 - tvd) * 100);
+
+  const mae = Math.round(
+    s.reduce((sum, si, i) => sum + Math.abs(si - rNorm[i]), 0) / keys.length * 100
+  );
+
+  const topS = keys[s.indexOf(Math.max(...s))];
+  const topR = keys[rNorm.indexOf(Math.max(...rNorm))];
+  const top1Match = topS === topR;
+
+  const rankS = [...keys].sort((a, b) =>
+    (s[keys.indexOf(b)] ?? 0) - (s[keys.indexOf(a)] ?? 0)
+  );
+  const rankR = [...keys].sort((a, b) =>
+    (rNorm[keys.indexOf(b)] ?? 0) - (rNorm[keys.indexOf(a)] ?? 0)
+  );
+  const rankMatch = rankS.every((k, i) => k === rankR[i]);
+
+  return { distSim, mae, top1Match, rankMatch, rNorm, keys };
+}
+
 function groupByCluster(data) {
   const map = {};
   data.forEach(d => {
@@ -212,6 +292,12 @@ export default function Dashboard({ experimentData, onBack }) {
   const executiveSummary = buildExecutiveSummary(experimentData?.apiResult, baseData);
   const clusterCards    = buildClusterCards(experimentData?.apiResult, baseData);
   const whyClusters     = buildWhyClusters(experimentData?.apiResult, clusterCards);
+
+  // Wide table rows (one per persona, all Q values in one row)
+  const wideRows = isRealData ? parseWideRows(experimentData.apiResult) : [];
+  const apiQuestions = experimentData?.apiResult?.questions || [];
+  const objectiveDists = experimentData?.apiResult?.objective_distributions || {};
+  const groundTruth = experimentData?.apiResult?.ground_truth || null;
 
   // Demographic filters (affect charts + heatmap)
   const filtered = baseData.filter(d =>
@@ -535,6 +621,46 @@ export default function Dashboard({ experimentData, onBack }) {
           overflow: hidden; color: #475569; line-height: 1.5; max-width: 340px;
         }
 
+        /* ── Objective distributions ── */
+        .od-section { display: flex; flex-direction: column; gap: 20px; }
+        .od-q-block { border: 1px solid #f1f5f9; border-radius: 14px; padding: 18px 20px; background: #fafafa; }
+        .od-q-title { font-size: 14px; font-weight: 700; color: #0f172a; margin: 0 0 14px 0; }
+        .od-bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+        .od-bar-label { font-size: 12.5px; color: #334155; min-width: 140px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .od-bar-track { flex: 1; height: 20px; background: #e2e8f0; border-radius: 6px; overflow: hidden; }
+        .od-bar-fill  { height: 100%; border-radius: 6px; transition: width 0.4s ease; }
+        .od-bar-pct   { font-size: 12.5px; font-weight: 700; min-width: 42px; text-align: right; color: #475569; }
+        .od-bar-cnt   { font-size: 11.5px; color: #94a3b8; min-width: 36px; text-align: right; }
+        .od-top-badge {
+          font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 99px;
+          background: #d1fae5; color: #059669; margin-left: 6px; white-space: nowrap;
+        }
+
+        /* ── Ground truth comparison ── */
+        .gt-section { margin-top: 16px; border-top: 1px solid #e2e8f0; padding-top: 14px; }
+        .gt-title { font-size: 11px; font-weight: 800; color: #7c3aed; text-transform: uppercase; letter-spacing: 0.1em; margin: 0 0 10px 0; }
+        .gt-metrics { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+        .gt-metric-chip {
+          padding: 4px 12px; border-radius: 99px; font-size: 12px; font-weight: 700;
+          background: #f1f5f9; color: #475569;
+        }
+        .gt-metric-chip.good { background: #d1fae5; color: #059669; }
+        .gt-metric-chip.warn { background: #fef3c7; color: #d97706; }
+        .gt-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+        .gt-table th { padding: 7px 10px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; color: #475569; font-weight: 700; text-align: left; }
+        .gt-table td { padding: 7px 10px; border-bottom: 1px solid #f8fafc; color: #334155; }
+        .gt-diff-pos { color: #059669; font-weight: 700; }
+        .gt-diff-neg { color: #dc2626; font-weight: 700; }
+
+        /* ── Wide response table ── */
+        .wide-table { border-collapse: collapse; font-size: 12.5px; min-width: 100%; }
+        .wide-table th { padding: 11px 12px; background: #f8fafc; border-bottom: 2px solid #e2e8f0; color: #475569; font-weight: 700; white-space: nowrap; text-align: left; }
+        .wide-table td { padding: 10px 12px; border-bottom: 1px solid #f8fafc; color: #334155; vertical-align: top; }
+        .wide-table tr:hover td { background: #f8fafc; }
+        .wide-td-subj { max-width: 240px; }
+        .wide-td-subj-text { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.5; color: #475569; }
+        .wide-td-obj { max-width: 160px; font-size: 12px; color: #475569; }
+
         @media (max-width: 900px) {
           .db-metrics-grid { grid-template-columns: 1fr 1fr; }
           .db-charts-grid  { grid-template-columns: 1fr; }
@@ -760,10 +886,111 @@ export default function Dashboard({ experimentData, onBack }) {
             </div>
           </div>
 
-          {/* ─────────────────── 4. CLUSTER CARDS + WHY ─────────────────── */}
+          {/* ─────────────────── 3.5 OBJECTIVE DISTRIBUTIONS ─────────────────── */}
+          {isRealData && Object.keys(objectiveDists).length > 0 && (
+            <div className="db-card" style={{ marginBottom: '24px' }}>
+              <p className="db-section-label">Objective Question Analysis</p>
+              <h3>객관식 문항별 선택지 분포</h3>
+              <p className="db-card-desc">각 객관식 문항의 선택지별 응답 비율 (Synthetic 패널 기준)</p>
+              <div className="od-section">
+                {Object.values(objectiveDists).map((dist, di) => {
+                  const sortedOpts = [...dist.options].sort((a, b) => b.percentage - a.percentage);
+                  const topOpt = sortedOpts[0]?.option;
+                  const qLabel = `Q${di + 1}. ${dist.question_content}`;
+                  const distColors = ['#4f46e5', '#7c3aed', '#2563eb', '#0891b2', '#059669', '#d97706'];
+                  const gtForQ = groundTruth ? (groundTruth[String(dist.question_id)] || groundTruth[dist.question_content] || null) : null;
+                  let gtMetrics = null;
+                  if (gtForQ && dist.options.length > 0) {
+                    try { gtMetrics = calcGroundTruthMetrics(dist.options, gtForQ); } catch (_) {}
+                  }
+                  return (
+                    <div key={dist.question_id} className="od-q-block">
+                      <p className="od-q-title">{qLabel}</p>
+                      {dist.options.map((opt, oi) => {
+                        const isTop = opt.option === topOpt;
+                        const fillColor = distColors[oi % distColors.length];
+                        return (
+                          <div key={oi} className="od-bar-row">
+                            <span className="od-bar-label" title={opt.option}>{opt.option}</span>
+                            <div className="od-bar-track">
+                              <div className="od-bar-fill" style={{
+                                width: `${opt.percentage}%`,
+                                background: isTop
+                                  ? `linear-gradient(90deg, ${fillColor}, ${fillColor}cc)`
+                                  : `${fillColor}55`,
+                              }} />
+                            </div>
+                            <span className="od-bar-pct" style={{ color: isTop ? fillColor : '#94a3b8' }}>
+                              {opt.percentage}%
+                            </span>
+                            <span className="od-bar-cnt">({opt.count}명)</span>
+                            {isTop && <span className="od-top-badge">TOP</span>}
+                          </div>
+                        );
+                      })}
+                      <p style={{ margin: '8px 0 0 0', fontSize: '12px', color: '#94a3b8' }}>
+                        유효 응답 {dist.total_valid}명 ·&nbsp;
+                        가장 많이 선택된 보기: <strong style={{ color: '#0f172a' }}>{topOpt}</strong>
+                        &nbsp;({sortedOpts[0]?.percentage}%)
+                      </p>
+                      {/* Ground truth comparison */}
+                      {gtMetrics && (
+                        <div className="gt-section">
+                          <p className="gt-title">Ground Truth 비교 (vs OpenSurvey)</p>
+                          <div className="gt-metrics">
+                            <span className={`gt-metric-chip ${gtMetrics.distSim >= 80 ? 'good' : gtMetrics.distSim >= 60 ? '' : 'warn'}`}>
+                              분포 유사도 {gtMetrics.distSim}%
+                            </span>
+                            <span className={`gt-metric-chip ${gtMetrics.mae <= 5 ? 'good' : gtMetrics.mae <= 15 ? '' : 'warn'}`}>
+                              MAE {gtMetrics.mae}%p
+                            </span>
+                            <span className={`gt-metric-chip ${gtMetrics.top1Match ? 'good' : 'warn'}`}>
+                              Top-1 {gtMetrics.top1Match ? '일치 ✓' : '불일치 ✗'}
+                            </span>
+                            <span className={`gt-metric-chip ${gtMetrics.rankMatch ? 'good' : ''}`}>
+                              순위 {gtMetrics.rankMatch ? '완전일치' : '부분불일치'}
+                            </span>
+                          </div>
+                          <table className="gt-table">
+                            <thead>
+                              <tr>
+                                <th>선택지</th>
+                                <th>실제 (OpenSurvey)</th>
+                                <th>Synthetic</th>
+                                <th>차이</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {dist.options.map((opt, oi) => {
+                                const realPct = Math.round((gtMetrics.rNorm[oi] ?? 0) * 100);
+                                const synPct = opt.percentage;
+                                const diff = synPct - realPct;
+                                return (
+                                  <tr key={oi}>
+                                    <td>{opt.option}</td>
+                                    <td>{realPct}%</td>
+                                    <td>{synPct}%</td>
+                                    <td className={diff > 0 ? 'gt-diff-pos' : diff < 0 ? 'gt-diff-neg' : ''}>
+                                      {diff > 0 ? '+' : ''}{diff}%p
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* ─────────────────── 4. CLUSTER CARDS + WHY (주관식 분석) ─────────────────── */}
           <div className="db-card" style={{ marginBottom: '24px' }}>
-            <p className="db-section-label">Opinion Cluster Summary</p>
-            <h3>군집별 핵심 요약</h3>
+            <p className="db-section-label">Subjective Response Analysis</p>
+            <h3>주관식 자유응답 군집 분석</h3>
             <p className="db-card-desc">각 의견 군집의 특성과 대표 응답을 확인하세요</p>
             <div className="cc-grid">
               {clusterCards.map((c, i) => {
@@ -973,12 +1200,11 @@ export default function Dashboard({ experimentData, onBack }) {
             </div>
           )}
 
-          {/* ─────────────────── 10. RESPONSE TABLE ─────────────────── */}
+          {/* ─────────────────── 10. WIDE RESPONSE TABLE ─────────────────── */}
           <div className="db-card">
-            <h3>페르소나별 상세 응답 데이터</h3>
-            <p className="db-card-desc">리서치에 참여한 가상 객체별 인구통계 및 원본 텍스트 데이터</p>
+            <h3>페르소나별 전 문항 응답 데이터</h3>
+            <p className="db-card-desc">리서치에 참여한 가상 패널의 인구통계 및 전 문항 응답 (가로 스크롤)</p>
 
-            {/* Table-specific filters: keyword search + cluster dropdown */}
             <div className="tb-toolbar">
               <input
                 className="tb-search"
@@ -991,53 +1217,119 @@ export default function Dashboard({ experimentData, onBack }) {
               </select>
             </div>
 
-            <div className="db-table-wrapper">
-              <table className="db-table">
-                <thead>
-                  <tr>
-                    {['패널 ID', '나이', '성별', '지역', '소셜 군집', '응답'].map(h => <th key={h}>{h}</th>)}
-                  </tr>
-                </thead>
-                <tbody>
-                  {tableData.map((d, i) => {
-                    const expanded = expandedRows.has(i);
-                    return (
-                      <tr key={i}>
-                        <td style={{ color: '#94a3b8', fontFamily: 'monospace' }}>{d.persona_id}</td>
-                        <td style={{ fontWeight: '600' }}>{d.age}세</td>
-                        <td>{d.gender}</td>
-                        <td>{d.region}</td>
-                        <td>
-                          {d.cluster_summary
-                            ? <span className="db-cluster-pill">{d.cluster_summary}</span>
-                            : <span style={{ color: '#94a3b8', fontSize: '12px' }}>군집 {d.cluster + 1}</span>}
-                        </td>
-                        <td>
-                          {expanded
-                            ? <span style={{ color: '#475569', lineHeight: '1.5' }}>{d.response}</span>
-                            : <div className="tb-preview">{d.response}</div>
-                          }
-                          {d.response?.length > 50 && (
-                            <button className="tb-expand-btn" onClick={() => toggleRow(i)}>
-                              {expanded ? '접기' : '자세히 보기'}
-                            </button>
-                          )}
+            {isRealData && wideRows.length > 0 ? (
+              <div className="db-table-wrapper">
+                <table className="wide-table">
+                  <thead>
+                    <tr>
+                      <th>패널 ID</th>
+                      <th>나이</th>
+                      <th>성별</th>
+                      <th>지역</th>
+                      <th>직업</th>
+                      {apiQuestions.map((q, qi) => (
+                        <th key={q.question_id}>
+                          Q{qi + 1}&nbsp;
+                          <span style={{ fontWeight: '500', color: '#7c3aed', fontSize: '10.5px' }}>
+                            {q.question_type === '주관식' || q.question_type === 'subjective' || q.question_type === 'open_ended' ? '주관식' : '객관식'}
+                          </span>
+                        </th>
+                      ))}
+                      <th>군집</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {wideRows
+                      .filter(d =>
+                        (clusterFilter === '전체' || (d.cluster_summary && d.cluster_summary === clusterFilter)) &&
+                        (!tableSearch ||
+                          Object.values(d.qResponses).some(r => r.value?.includes(tableSearch)) ||
+                          d.persona_id.includes(tableSearch) ||
+                          d.occupation.includes(tableSearch))
+                      )
+                      .map((d, i) => (
+                        <tr key={i}>
+                          <td style={{ color: '#94a3b8', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>{d.persona_id}</td>
+                          <td style={{ fontWeight: '600', whiteSpace: 'nowrap' }}>{d.age}세</td>
+                          <td>{d.gender}</td>
+                          <td style={{ whiteSpace: 'nowrap' }}>{d.region}</td>
+                          <td style={{ whiteSpace: 'nowrap', fontSize: '12px' }}>{d.occupation}</td>
+                          {apiQuestions.map(q => {
+                            const resp = d.qResponses[q.question_id];
+                            const isSubj = q.question_type === '주관식' || q.question_type === 'subjective' || q.question_type === 'open_ended';
+                            const val = resp?.value || '';
+                            return (
+                              <td key={q.question_id} className={isSubj ? 'wide-td-subj' : 'wide-td-obj'}>
+                                {isSubj ? (
+                                  <div className="wide-td-subj-text">{val || <span style={{ color: '#cbd5e1' }}>—</span>}</div>
+                                ) : (
+                                  <span style={{ color: val ? '#334155' : '#cbd5e1' }}>{val || '—'}</span>
+                                )}
+                              </td>
+                            );
+                          })}
+                          <td style={{ whiteSpace: 'nowrap' }}>
+                            {d.cluster_summary
+                              ? <span className="db-cluster-pill">{d.cluster_summary}</span>
+                              : d.cluster !== null
+                                ? <span style={{ color: '#94a3b8', fontSize: '12px' }}>군집 {d.cluster + 1}</span>
+                                : <span style={{ color: '#cbd5e1', fontSize: '12px' }}>—</span>}
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              /* fallback narrow table for dummy / old data */
+              <div className="db-table-wrapper">
+                <table className="db-table">
+                  <thead>
+                    <tr>
+                      {['패널 ID', '나이', '성별', '지역', '소셜 군집', '응답'].map(h => <th key={h}>{h}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tableData.map((d, i) => {
+                      const expanded = expandedRows.has(i);
+                      return (
+                        <tr key={i}>
+                          <td style={{ color: '#94a3b8', fontFamily: 'monospace' }}>{d.persona_id}</td>
+                          <td style={{ fontWeight: '600' }}>{d.age}세</td>
+                          <td>{d.gender}</td>
+                          <td>{d.region}</td>
+                          <td>
+                            {d.cluster_summary
+                              ? <span className="db-cluster-pill">{d.cluster_summary}</span>
+                              : <span style={{ color: '#94a3b8', fontSize: '12px' }}>군집 {d.cluster + 1}</span>}
+                          </td>
+                          <td>
+                            {expanded
+                              ? <span style={{ color: '#475569', lineHeight: '1.5' }}>{d.response}</span>
+                              : <div className="tb-preview">{d.response}</div>}
+                            {d.response?.length > 50 && (
+                              <button className="tb-expand-btn" onClick={() => toggleRow(i)}>
+                                {expanded ? '접기' : '자세히 보기'}
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {tableData.length === 0 && (
+                      <tr>
+                        <td colSpan={6} style={{ textAlign: 'center', color: '#94a3b8', padding: '40px 0' }}>
+                          검색 결과가 없습니다.
                         </td>
                       </tr>
-                    );
-                  })}
-                  {tableData.length === 0 && (
-                    <tr>
-                      <td colSpan={6} style={{ textAlign: 'center', color: '#94a3b8', padding: '40px 0' }}>
-                        검색 결과가 없습니다.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
             <p style={{ margin: '10px 0 0 0', fontSize: '12.5px', color: '#94a3b8', textAlign: 'right' }}>
-              {tableData.length}개 응답 표시 중
+              {isRealData ? `${wideRows.length}명 표시 중` : `${tableData.length}개 응답 표시 중`}
               {experimentStats?.all_questions_completed_count !== null && experimentStats?.all_questions_completed_count !== undefined
                 ? ` (전 문항 완료 ${experimentStats.all_questions_completed_count}명 / 요청 ${experimentStats.n_requested}명)`
                 : ` (전체 ${baseData.length}개)`}
