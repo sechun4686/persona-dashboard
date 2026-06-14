@@ -105,36 +105,54 @@ function parseWideRows(apiResult) {
   return rows;
 }
 
-// ── Ground truth comparison metrics ──
-function calcGroundTruthMetrics(syntheticOptions, groundTruthMap) {
-  // syntheticOptions: [{option, count, percentage}]
-  // groundTruthMap: {option_text: percentage (0-100)}
-  const keys = syntheticOptions.map(o => o.option);
-  const s = keys.map(k => (syntheticOptions.find(o => o.option === k)?.percentage ?? 0) / 100);
-  const r = keys.map(k => (groundTruthMap[k] ?? 0) / 100);
-  const totalR = r.reduce((a, b) => a + b, 0);
-  const rNorm = totalR > 0 ? r.map(v => v / totalR) : r;
+// ── Objective distribution: compute from responses (works with any API result) ──
+const _OBJ_TYPES = new Set(['객관식', 'objective', 'multiple_choice']);
 
-  const tvd = s.reduce((sum, si, i) => sum + Math.abs(si - rNorm[i]), 0) / 2;
-  const distSim = Math.round((1 - tvd) * 100);
+function computeObjectiveDists(apiResult, formQuestions) {
+  if (!apiResult?.responses) return {};
 
-  const mae = Math.round(
-    s.reduce((sum, si, i) => sum + Math.abs(si - rNorm[i]), 0) / keys.length * 100
-  );
+  // Build a map of question info from any available source
+  const allQs = [...(apiResult.questions || []), ...(formQuestions || [])];
+  const qInfoMap = {};
+  allQs.forEach(q => { if (!(q.question_id in qInfoMap)) qInfoMap[q.question_id] = q; });
 
-  const topS = keys[s.indexOf(Math.max(...s))];
-  const topR = keys[rNorm.indexOf(Math.max(...rNorm))];
-  const top1Match = topS === topR;
+  // Group selected_option by question_id, objective only
+  const byQ = {};
+  apiResult.responses.forEach(r => {
+    if (!r.selected_option) return;
+    const qt = r.question_type || qInfoMap[r.question_id]?.question_type || '';
+    if (!_OBJ_TYPES.has(qt)) return;
+    if (!byQ[r.question_id]) byQ[r.question_id] = [];
+    byQ[r.question_id].push(r.selected_option);
+  });
 
-  const rankS = [...keys].sort((a, b) =>
-    (s[keys.indexOf(b)] ?? 0) - (s[keys.indexOf(a)] ?? 0)
-  );
-  const rankR = [...keys].sort((a, b) =>
-    (rNorm[keys.indexOf(b)] ?? 0) - (rNorm[keys.indexOf(a)] ?? 0)
-  );
-  const rankMatch = rankS.every((k, i) => k === rankR[i]);
+  if (Object.keys(byQ).length === 0) return {};
 
-  return { distSim, mae, top1Match, rankMatch, rNorm, keys };
+  const result = {};
+  Object.entries(byQ).forEach(([qidStr, selectedList]) => {
+    const qid = Number(qidStr);
+    const qInfo = qInfoMap[qid] || {};
+    const total = selectedList.length;
+    if (total === 0) return;
+
+    // Pre-fill with declared options so 0-count choices still appear
+    const counts = {};
+    (qInfo.options || []).forEach(opt => { counts[opt] = 0; });
+    selectedList.forEach(sel => { counts[sel] = (counts[sel] || 0) + 1; });
+
+    result[qidStr] = {
+      question_id: qid,
+      question_content: qInfo.question_content || `객관식 문항 ${qid + 1}`,
+      options: Object.entries(counts).map(([opt, cnt]) => ({
+        option: opt,
+        count: cnt,
+        percentage: Math.round(cnt / total * 1000) / 10,
+      })),
+      total_valid: total,
+    };
+  });
+
+  return result;
 }
 
 function groupByCluster(data) {
@@ -295,9 +313,16 @@ export default function Dashboard({ experimentData, onBack }) {
 
   // Wide table rows (one per persona, all Q values in one row)
   const wideRows = isRealData ? parseWideRows(experimentData.apiResult) : [];
-  const apiQuestions = experimentData?.apiResult?.questions || [];
-  const objectiveDists = experimentData?.apiResult?.objective_distributions || {};
-  const groundTruth = experimentData?.apiResult?.ground_truth || null;
+  const apiQuestions = experimentData?.apiResult?.questions || experimentData?.questions || [];
+
+  // Objective distributions: prefer backend-computed, else derive from responses
+  const objectiveDists = (() => {
+    const fromBackend = experimentData?.apiResult?.objective_distributions;
+    if (fromBackend && Object.keys(fromBackend).length > 0) return fromBackend;
+    return isRealData
+      ? computeObjectiveDists(experimentData.apiResult, experimentData?.questions)
+      : {};
+  })();
 
   // Demographic filters (affect charts + heatmap)
   const filtered = baseData.filter(d =>
@@ -890,37 +915,26 @@ export default function Dashboard({ experimentData, onBack }) {
           {isRealData && Object.keys(objectiveDists).length > 0 && (
             <div className="db-card" style={{ marginBottom: '24px' }}>
               <p className="db-section-label">Objective Question Analysis</p>
-              <h3>객관식 문항별 선택지 분포</h3>
-              <p className="db-card-desc">각 객관식 문항의 선택지별 응답 비율 (Synthetic 패널 기준)</p>
+              <h3>객관식 문항별 선택 비율</h3>
+              <p className="db-card-desc">각 선택지를 고른 패널 수와 비율</p>
               <div className="od-section">
                 {Object.values(objectiveDists).map((dist, di) => {
-                  const sortedOpts = [...dist.options].sort((a, b) => b.percentage - a.percentage);
-                  const topOpt = sortedOpts[0]?.option;
-                  const qLabel = `Q${di + 1}. ${dist.question_content}`;
-                  const distColors = ['#4f46e5', '#7c3aed', '#2563eb', '#0891b2', '#059669', '#d97706'];
-                  const gtForQ = groundTruth ? (groundTruth[String(dist.question_id)] || groundTruth[dist.question_content] || null) : null;
-                  let gtMetrics = null;
-                  if (gtForQ && dist.options.length > 0) {
-                    try { gtMetrics = calcGroundTruthMetrics(dist.options, gtForQ); } catch (_) {}
-                  }
+                  const topOpt = [...dist.options].sort((a, b) => b.count - a.count)[0]?.option;
                   return (
                     <div key={dist.question_id} className="od-q-block">
-                      <p className="od-q-title">{qLabel}</p>
+                      <p className="od-q-title">Q{di + 1}. {dist.question_content}</p>
                       {dist.options.map((opt, oi) => {
                         const isTop = opt.option === topOpt;
-                        const fillColor = distColors[oi % distColors.length];
                         return (
                           <div key={oi} className="od-bar-row">
                             <span className="od-bar-label" title={opt.option}>{opt.option}</span>
                             <div className="od-bar-track">
                               <div className="od-bar-fill" style={{
                                 width: `${opt.percentage}%`,
-                                background: isTop
-                                  ? `linear-gradient(90deg, ${fillColor}, ${fillColor}cc)`
-                                  : `${fillColor}55`,
+                                background: isTop ? '#4f46e5' : '#a5b4fc',
                               }} />
                             </div>
-                            <span className="od-bar-pct" style={{ color: isTop ? fillColor : '#94a3b8' }}>
+                            <span className="od-bar-pct" style={{ color: isTop ? '#4f46e5' : '#94a3b8' }}>
                               {opt.percentage}%
                             </span>
                             <span className="od-bar-cnt">({opt.count}명)</span>
@@ -929,57 +943,8 @@ export default function Dashboard({ experimentData, onBack }) {
                         );
                       })}
                       <p style={{ margin: '8px 0 0 0', fontSize: '12px', color: '#94a3b8' }}>
-                        유효 응답 {dist.total_valid}명 ·&nbsp;
-                        가장 많이 선택된 보기: <strong style={{ color: '#0f172a' }}>{topOpt}</strong>
-                        &nbsp;({sortedOpts[0]?.percentage}%)
+                        유효 응답 {dist.total_valid}명 · 최다 선택: <strong style={{ color: '#0f172a' }}>{topOpt}</strong>
                       </p>
-                      {/* Ground truth comparison */}
-                      {gtMetrics && (
-                        <div className="gt-section">
-                          <p className="gt-title">Ground Truth 비교 (vs OpenSurvey)</p>
-                          <div className="gt-metrics">
-                            <span className={`gt-metric-chip ${gtMetrics.distSim >= 80 ? 'good' : gtMetrics.distSim >= 60 ? '' : 'warn'}`}>
-                              분포 유사도 {gtMetrics.distSim}%
-                            </span>
-                            <span className={`gt-metric-chip ${gtMetrics.mae <= 5 ? 'good' : gtMetrics.mae <= 15 ? '' : 'warn'}`}>
-                              MAE {gtMetrics.mae}%p
-                            </span>
-                            <span className={`gt-metric-chip ${gtMetrics.top1Match ? 'good' : 'warn'}`}>
-                              Top-1 {gtMetrics.top1Match ? '일치 ✓' : '불일치 ✗'}
-                            </span>
-                            <span className={`gt-metric-chip ${gtMetrics.rankMatch ? 'good' : ''}`}>
-                              순위 {gtMetrics.rankMatch ? '완전일치' : '부분불일치'}
-                            </span>
-                          </div>
-                          <table className="gt-table">
-                            <thead>
-                              <tr>
-                                <th>선택지</th>
-                                <th>실제 (OpenSurvey)</th>
-                                <th>Synthetic</th>
-                                <th>차이</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {dist.options.map((opt, oi) => {
-                                const realPct = Math.round((gtMetrics.rNorm[oi] ?? 0) * 100);
-                                const synPct = opt.percentage;
-                                const diff = synPct - realPct;
-                                return (
-                                  <tr key={oi}>
-                                    <td>{opt.option}</td>
-                                    <td>{realPct}%</td>
-                                    <td>{synPct}%</td>
-                                    <td className={diff > 0 ? 'gt-diff-pos' : diff < 0 ? 'gt-diff-neg' : ''}>
-                                      {diff > 0 ? '+' : ''}{diff}%p
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
                     </div>
                   );
                 })}
