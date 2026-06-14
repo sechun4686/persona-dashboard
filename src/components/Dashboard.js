@@ -23,11 +23,20 @@ function parseApiResult(apiResult) {
   if (!apiResult || !apiResult.personas || !apiResult.responses) return null;
   const personaMap = {};
   apiResult.personas.forEach(p => { personaMap[p.persona_uuid] = p; });
+
+  // 테이블에 표시할 기준 문항 결정:
+  // 1) primary_question_id (주관식 분석 기준)  2) 없으면 첫 question_id
+  const primaryQId = apiResult.primary_question_id
+    ?? [...new Set(apiResult.responses.map(r => r.question_id))].sort((a, b) => a - b)[0]
+    ?? 0;
+
   const rows = [];
   apiResult.responses.forEach((r, i) => {
-    if (r.question_id !== 0) return;
+    if (r.question_id !== primaryQId) return;
+    // is_valid 필드가 있으면 그것을, 없으면 response 존재 여부로 판단
+    const valid = r.is_valid !== undefined ? r.is_valid : !!(r.response || r.selected_option);
+    if (!valid) return;
     const resp = r.response || r.selected_option;
-    // 유효 응답만 포함 — null/빈값/알려진 무효 문자열 제외
     if (!resp || INVALID_RESPONSES.has(resp.trim())) return;
     const persona = personaMap[r.persona_uuid] || {};
     rows.push({
@@ -41,7 +50,6 @@ function parseApiResult(apiResult) {
       cluster_summary: r.cluster_summary || null,
     });
   });
-  // apiResult가 존재하면 실제 데이터이므로 빈 배열이라도 반환 (dummyData 낙오 방지)
   return rows;
 }
 
@@ -190,11 +198,14 @@ export default function Dashboard({ experimentData, onBack }) {
   const overallReport = experimentData?.apiResult?.overall_report;
   const diversityMetrics = experimentData?.apiResult?.diversity_metrics || {};
   const experimentStats = isRealData ? {
-    n_requested:       experimentData.apiResult?.n_requested       ?? null,
-    valid_response_count:  experimentData.apiResult?.valid_response_count  ?? null,
-    failed_response_count: experimentData.apiResult?.failed_response_count ?? null,
-    retry_count:       experimentData.apiResult?.retry_count       ?? null,
-    replacement_count: experimentData.apiResult?.replacement_count ?? null,
+    n_requested:                experimentData.apiResult?.n_requested                ?? null,
+    all_questions_completed_count: experimentData.apiResult?.all_questions_completed_count ?? null,
+    valid_response_count:       experimentData.apiResult?.valid_response_count       ?? null,
+    failed_response_count:      experimentData.apiResult?.failed_response_count      ?? null,
+    retry_count:                experimentData.apiResult?.retry_count                ?? null,
+    replacement_count:          experimentData.apiResult?.replacement_count          ?? null,
+    question_stats:             experimentData.apiResult?.question_stats             ?? [],
+    failure_reasons:            experimentData.apiResult?.failure_reasons            ?? {},
   } : null;
 
   // Derived / fallback data — safe with old result JSON
@@ -577,9 +588,12 @@ export default function Dashboard({ experimentData, onBack }) {
                 <span className="db-badge primary">{experimentData.experiment_type}</span>
               )}
               <span className="db-badge">
-                유효 응답 {isRealData ? (experimentStats?.valid_response_count ?? baseData.length) : baseData.length}
+                전 문항 완료&nbsp;
+                {isRealData && experimentStats?.all_questions_completed_count !== null && experimentStats?.all_questions_completed_count !== undefined
+                  ? experimentStats.all_questions_completed_count
+                  : baseData.length}
                 {experimentStats?.n_requested !== null && experimentStats?.n_requested !== undefined
-                  ? ` / 요청 ${experimentStats.n_requested}명` : '명'}
+                  ? ` / ${experimentStats.n_requested}명` : '명'}
               </span>
               <span className="db-badge">
                 군집 {diversityMetrics?.cluster_count !== null && diversityMetrics?.cluster_count !== undefined
@@ -590,24 +604,58 @@ export default function Dashboard({ experimentData, onBack }) {
             </div>
             {/* 실험 실행 통계 (실제 데이터일 때만 표시) */}
             {isRealData && experimentStats && (
-              <div style={{
-                display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '12px',
-                padding: '10px 14px', background: '#f8fafc', borderRadius: '10px',
-                border: '1px solid #f1f5f9', fontSize: '12.5px',
-              }}>
-                {[
-                  { label: '요청', value: experimentStats.n_requested, unit: '명' },
-                  { label: '유효', value: experimentStats.valid_response_count, unit: '명', color: '#059669' },
-                  { label: '실패', value: experimentStats.failed_response_count, unit: '명', color: experimentStats.failed_response_count > 0 ? '#dc2626' : '#94a3b8' },
-                  { label: '재시도', value: experimentStats.retry_count, unit: '회' },
-                  { label: '대체 페르소나', value: experimentStats.replacement_count, unit: '명' },
-                ].map(({ label, value, unit, color }) => (
-                  value !== null && value !== undefined && (
-                    <span key={label} style={{ color: color || '#475569', fontWeight: '600' }}>
-                      {label}&nbsp;<strong style={{ color: color || '#0f172a' }}>{value}{unit}</strong>
+              <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {/* 행 1: 전체 요약 */}
+                <div style={{
+                  display: 'flex', gap: '10px', flexWrap: 'wrap',
+                  padding: '10px 14px', background: '#f8fafc', borderRadius: '10px',
+                  border: '1px solid #f1f5f9', fontSize: '12.5px',
+                }}>
+                  {[
+                    { label: '요청 패널', value: experimentStats.n_requested, unit: '명' },
+                    { label: '전 문항 완료', value: experimentStats.all_questions_completed_count, unit: '명', color: '#059669' },
+                    { label: '재시도', value: experimentStats.retry_count, unit: '회' },
+                    { label: '대체 페르소나', value: experimentStats.replacement_count, unit: '명' },
+                  ].map(({ label, value, unit, color }) =>
+                    value !== null && value !== undefined ? (
+                      <span key={label} style={{ fontWeight: '600', color: color || '#475569' }}>
+                        {label}&nbsp;<strong style={{ color: color || '#0f172a' }}>{value}{unit}</strong>
+                      </span>
+                    ) : null
+                  )}
+                  {/* 실패 원인 요약 */}
+                  {experimentStats.failure_reasons && Object.keys(experimentStats.failure_reasons).length > 0 && (
+                    <span style={{ color: '#94a3b8', marginLeft: '4px' }}>
+                      ·&nbsp;실패원인:&nbsp;
+                      {Object.entries(experimentStats.failure_reasons)
+                        .map(([k, v]) => `${k}(${v})`)
+                        .join(', ')}
                     </span>
-                  )
-                ))}
+                  )}
+                </div>
+                {/* 행 2: 문항별 유효 응답 수 */}
+                {experimentStats.question_stats?.length > 0 && (
+                  <div style={{
+                    display: 'flex', gap: '8px', flexWrap: 'wrap',
+                    padding: '8px 14px', background: '#f8fafc', borderRadius: '10px',
+                    border: '1px solid #f1f5f9', fontSize: '12px',
+                  }}>
+                    <span style={{ fontWeight: '700', color: '#475569', marginRight: '4px' }}>문항별 유효:</span>
+                    {experimentStats.question_stats.map((qs, idx) => {
+                      const label = qs.question_type === '주관식' || qs.question_type === 'subjective' ? '주관식' : '객관식';
+                      const validOk = qs.valid_response_count === experimentStats.n_requested;
+                      return (
+                        <span key={qs.question_id} style={{
+                          fontWeight: '600',
+                          color: validOk ? '#059669' : qs.failed_response_count > 5 ? '#dc2626' : '#d97706',
+                        }}>
+                          Q{idx + 1}&nbsp;{label}&nbsp;
+                          <strong>{qs.valid_response_count}/{experimentStats.n_requested}</strong>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
 
@@ -661,11 +709,11 @@ export default function Dashboard({ experimentData, onBack }) {
           {/* ─────────────────── 3. METRICS ─────────────────── */}
           <div className="db-metrics-grid">
             <div className="db-metric-item">
-              <p className="db-metric-label">유효 응답 패널</p>
+              <p className="db-metric-label">주관식 유효 패널</p>
               <p className="db-metric-value">{filtered.length} 명</p>
               <p className="db-metric-interp">
-                {experimentStats?.n_requested !== null && experimentStats?.n_requested !== undefined
-                  ? `요청 ${experimentStats.n_requested}명 중 유효 응답 수입니다.`
+                {experimentStats?.all_questions_completed_count !== null && experimentStats?.all_questions_completed_count !== undefined
+                  ? `전 문항 완료 ${experimentStats.all_questions_completed_count}명 / 요청 ${experimentStats.n_requested}명`
                   : '가상 패널이 포함한 응답자 수입니다.'}
               </p>
             </div>
@@ -990,8 +1038,8 @@ export default function Dashboard({ experimentData, onBack }) {
             </div>
             <p style={{ margin: '10px 0 0 0', fontSize: '12.5px', color: '#94a3b8', textAlign: 'right' }}>
               {tableData.length}개 응답 표시 중
-              {experimentStats?.valid_response_count !== null && experimentStats?.valid_response_count !== undefined
-                ? ` (유효 ${experimentStats.valid_response_count}명 / 요청 ${experimentStats.n_requested}명)`
+              {experimentStats?.all_questions_completed_count !== null && experimentStats?.all_questions_completed_count !== undefined
+                ? ` (전 문항 완료 ${experimentStats.all_questions_completed_count}명 / 요청 ${experimentStats.n_requested}명)`
                 : ` (전체 ${baseData.length}개)`}
             </p>
           </div>
