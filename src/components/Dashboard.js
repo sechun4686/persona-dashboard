@@ -24,7 +24,6 @@ function parseApiResult(apiResult) {
   const rows = [];
   apiResult.responses.forEach((r, i) => {
     if (r.question_id !== 0) return;
-    if (!r.response && !r.selected_option) return;
     const persona = personaMap[r.persona_uuid] || {};
     rows.push({
       persona_id: r.persona_uuid?.slice(0, 8) || `P${String(i).padStart(3, '0')}`,
@@ -32,7 +31,7 @@ function parseApiResult(apiResult) {
       gender: persona.sex === '여자' ? '여' : persona.sex === '남자' ? '남' : persona.sex || '?',
       region: persona.province || '?',
       occupation: persona.occupation || '?',
-      response: r.response || r.selected_option || '',
+      response: r.response || r.selected_option || '(응답 없음)',
       cluster: r.cluster !== null && r.cluster !== undefined ? r.cluster : 0,
       cluster_summary: r.cluster_summary || '분석 대기중',
     });
