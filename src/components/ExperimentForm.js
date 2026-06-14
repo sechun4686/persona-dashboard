@@ -119,7 +119,7 @@ export default function ExperimentForm({ onSubmit, onBack, initialData }) {
 
     setLoading(true);
     try {
-      const response = await fetch('http://107.23.150.202:8000/run-experiment', {
+      const response = await fetch('/api/run-experiment', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
