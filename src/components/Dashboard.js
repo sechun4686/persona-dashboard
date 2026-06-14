@@ -315,6 +315,15 @@ export default function Dashboard({ experimentData, onBack }) {
         .db-badge.primary { background: #e0e7ff; color: #4f46e5; }
         .db-badge.warning { background: #fff3cd; color: #856404; }
 
+        /* ── A/B 테스트 이미지 미리보기 ── */
+        .db-ab-images { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
+        .db-ab-image-item { width: 140px; }
+        .db-ab-image-item img {
+          width: 100%; height: 100px; object-fit: contain;
+          background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px;
+        }
+        .db-ab-image-label { margin-top: 6px; font-size: 12.5px; font-weight: 700; color: #475569; text-align: center; }
+
         /* ── Executive Summary ── */
         .es-card {
           background: linear-gradient(135deg, #f5f3ff 0%, #ffffff 100%);
@@ -558,6 +567,17 @@ export default function Dashboard({ experimentData, onBack }) {
               <span className="db-badge">군집 {new Set(filtered.map(d => d.cluster_summary)).size}개</span>
               {!isRealData && <span className="db-badge warning">시뮬레이션 데이터</span>}
             </div>
+
+            {experimentData?.images?.some(img => img.url) && (
+              <div className="db-ab-images">
+                {experimentData.images.filter(img => img.url).map((img, idx) => (
+                  <div key={idx} className="db-ab-image-item">
+                    <img src={img.url} alt={img.label || `이미지 ${idx + 1}`} />
+                    <p className="db-ab-image-label">{img.label || `이미지 ${idx + 1}`}</p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* ─────────────────── 2. EXECUTIVE SUMMARY ─────────────────── */}
