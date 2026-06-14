@@ -4,17 +4,26 @@ const regions = ['서울', '부산', '대구', '인천', '광주', '대전', '�
 const experimentTypes = ['사전조사', 'A/B테스트', '가격책정', '사용성테스트', '브랜드인식'];
 
 export default function ExperimentForm({ onSubmit, onBack, initialData }) { 
-  const [form, setForm] = useState(initialData || { // ★ initialData가 있으면 그걸 초기값으로 설정!
+  const [form, setForm] = useState({ // ★ initialData가 있으면 그걸 초기값으로 설정!
     experiment_title: '',
     experiment_type: '사전조사',
     service_description: '',
     questions: [{ type: '주관식', content: '', options: [] }],
+    images: [],
     n: 100,
-    filters: { sex: '', age_min: 19, age_max: 99, province: '', occupation: '' }
+    filters: { sex: '', age_min: 19, age_max: 99, province: '', occupation: '' },
+    ...(initialData || {})
   });
   const [loading, setLoading] = useState(false);
 
-  const updateField = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
+  const updateField = (field, value) => setForm(prev => {
+    const next = { ...prev, [field]: value };
+    // A/B 테스트로 전환 시, 비교할 이미지를 넣을 빈 슬롯 2개를 기본으로 추가
+    if (field === 'experiment_type' && value === 'A/B테스트' && (!prev.images || prev.images.length === 0)) {
+      next.images = [{ label: 'A안', url: '' }, { label: 'B안', url: '' }];
+    }
+    return next;
+  });
   const updateFilter = (field, value) => setForm(prev => ({ ...prev, filters: { ...prev.filters, [field]: value } }));
 
   const addQuestion = (type) => {
@@ -46,9 +55,42 @@ export default function ExperimentForm({ onSubmit, onBack, initialData }) {
     setForm(prev => ({ ...prev, questions: prev.questions.filter((_, i) => i !== idx) }));
   };
 
+  const addImage = () => {
+    setForm(prev => ({ ...prev, images: [...prev.images, { label: '', url: '' }] }));
+  };
+
+  const updateImageLabel = (idx, label) => {
+    const updated = [...form.images];
+    updated[idx] = { ...updated[idx], label };
+    setForm(prev => ({ ...prev, images: updated }));
+  };
+
+  const removeImage = (idx) => {
+    setForm(prev => ({ ...prev, images: prev.images.filter((_, i) => i !== idx) }));
+  };
+
+  const handleImageFile = (idx, file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const url = e.target.result;
+      setForm(prev => {
+        const updated = [...prev.images];
+        updated[idx] = { ...updated[idx], url };
+        return { ...prev, images: updated };
+      });
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleSubmit = async () => {
     if (!form.experiment_title) return alert('실험 제목을 입력해주세요!');
     if (form.questions.some(q => !q.content)) return alert('모든 질문을 입력해주세요!');
+
+    const validImages = form.images.filter(img => img.url);
+    if (form.experiment_type === 'A/B테스트' && validImages.length < 2) {
+      return alert('A/B 테스트를 위해 비교할 이미지를 2개 이상 업로드해주세요!');
+    }
 
     const payload = {
       experiment_title: form.experiment_title,
@@ -60,7 +102,11 @@ export default function ExperimentForm({ onSubmit, onBack, initialData }) {
         question_type: q.type,
         options: q.options || []
       })),
-      images: [],
+      images: validImages.map((img, idx) => ({
+        image_id: idx,
+        label: img.label || `이미지 ${idx + 1}`,
+        url: img.url
+      })),
       filters: {
         sex: form.filters.sex || null,
         age_min: form.filters.age_min || null,
@@ -332,6 +378,56 @@ export default function ExperimentForm({ onSubmit, onBack, initialData }) {
         }
         .ef-add-opt-btn:hover { border-color: #7c3aed; color: #7c3aed; }
 
+        /* A/B 테스트 이미지 업로드 */
+        .ef-img-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+          gap: 16px;
+        }
+        .ef-img-box {
+          position: relative;
+          background: #f8fafc;
+          padding: 16px;
+          border-radius: 14px;
+          border: 1px solid #e2e8f0;
+        }
+        .ef-img-preview {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 100%;
+          height: 140px;
+          border-radius: 10px;
+          border: 1px dashed #cbd5e1;
+          background: #ffffff;
+          color: #94a3b8;
+          font-size: 13px;
+          font-weight: 500;
+          overflow: hidden;
+          cursor: pointer;
+          margin-bottom: 12px;
+          transition: all 0.2s ease;
+        }
+        .ef-img-preview:hover { border-color: #4f46e5; color: #4f46e5; }
+        .ef-img-preview img {
+          width: 100%;
+          height: 100%;
+          object-fit: contain;
+        }
+        .ef-img-remove {
+          position: absolute;
+          top: 10px; right: 10px;
+          width: 26px; height: 26px;
+          display: flex; align-items: center; justify-content: center;
+          background: rgba(255,255,255,0.9);
+          border: none; border-radius: 50%;
+          color: #94a3b8; cursor: pointer;
+          font-size: 18px; line-height: 1;
+          z-index: 1;
+          transition: color 0.2s;
+        }
+        .ef-img-remove:hover { color: #ef4444; }
+
         /* 최하단 메인 제출 버튼 */
         .ef-submit-btn {
           width: 100%; padding: 18px;
@@ -457,6 +553,37 @@ export default function ExperimentForm({ onSubmit, onBack, initialData }) {
               <button onClick={() => addQuestion('객관식')} className="ef-add-q-btn">+ 객관식 질문</button>
             </div>
           </div>
+
+          {/* A/B 테스트 이미지 카드 */}
+          {form.experiment_type === 'A/B테스트' && (
+            <div className="ef-card">
+              <h3 className="ef-section-title">A/B 테스트 이미지</h3>
+              <p className="ef-section-desc">비교할 시안 이미지를 업로드하고 각각에 라벨을 지정하세요 (예: A안, B안)</p>
+
+              <div className="ef-img-grid">
+                {form.images.map((img, idx) => (
+                  <div key={idx} className="ef-img-box">
+                    {form.images.length > 1 && (
+                      <button onClick={() => removeImage(idx)} className="ef-img-remove">×</button>
+                    )}
+                    <label className="ef-img-preview">
+                      {img.url
+                        ? <img src={img.url} alt={img.label || `이미지 ${idx + 1}`} />
+                        : '클릭하여 이미지 선택'}
+                      <input type="file" accept="image/*" style={{ display: 'none' }}
+                        onChange={e => handleImageFile(idx, e.target.files?.[0])} />
+                    </label>
+                    {/* ★ spellCheck={false} 반영 ★ */}
+                    <input spellCheck={false} className="ef-input" style={{ background: '#fff' }}
+                      placeholder={`라벨 (예: ${idx === 0 ? 'A안' : 'B안'})`}
+                      value={img.label} onChange={e => updateImageLabel(idx, e.target.value)} />
+                  </div>
+                ))}
+              </div>
+
+              <button onClick={addImage} className="ef-add-q-btn" style={{ marginTop: '16px', width: '100%' }}>+ 이미지 추가</button>
+            </div>
+          )}
 
           {/* 페르소나 필터 카드 */}
           <div className="ef-card">
