@@ -105,23 +105,41 @@ function parseWideRows(apiResult) {
   return rows;
 }
 
-// ── Objective distribution: compute from responses (works with any API result) ──
-const _OBJ_TYPES = new Set(['객관식', 'objective', 'multiple_choice']);
+// ── Objective distribution: compute from responses ──
+// Works regardless of whether backend returns objective_distributions or question_type.
+// Only requirement: objective responses have selected_option set; subjective ones don't.
+const _SUBJ_TYPES = new Set(['주관식', 'subjective', 'open_ended']);
 
 function computeObjectiveDists(apiResult, formQuestions) {
-  if (!apiResult?.responses) return {};
+  if (!apiResult?.responses || !Array.isArray(apiResult.responses)) return {};
 
-  // Build a map of question info from any available source
-  const allQs = [...(apiResult.questions || []), ...(formQuestions || [])];
+  // Build question info map.
+  // API result questions: { question_id, question_type, question_content, options }
+  // Form questions:       { type, content, options } — no question_id, use array index
   const qInfoMap = {};
-  allQs.forEach(q => { if (!(q.question_id in qInfoMap)) qInfoMap[q.question_id] = q; });
+  (apiResult.questions || []).forEach(q => {
+    if (q.question_id != null) qInfoMap[q.question_id] = q;
+  });
+  (formQuestions || []).forEach((q, idx) => {
+    const qid = q.question_id ?? idx;
+    if (!(qid in qInfoMap)) {
+      qInfoMap[qid] = {
+        question_type:    q.question_type    || q.type    || '',
+        question_content: q.question_content || q.content || '',
+        options:          q.options          || [],
+      };
+    }
+  });
 
-  // Group selected_option by question_id, objective only
+  // Collect responses that have selected_option (only objective responses set this).
+  // Skip only if the question_type is explicitly subjective.
   const byQ = {};
   apiResult.responses.forEach(r => {
     if (!r.selected_option) return;
-    const qt = r.question_type || qInfoMap[r.question_id]?.question_type || '';
-    if (!_OBJ_TYPES.has(qt)) return;
+    const qInfo = qInfoMap[r.question_id];
+    const qt = r.question_type || qInfo?.question_type || qInfo?.type || '';
+    if (_SUBJ_TYPES.has(qt)) return;   // explicitly subjective → skip
+    // empty qt + selected_option present → treat as objective
     if (!byQ[r.question_id]) byQ[r.question_id] = [];
     byQ[r.question_id].push(r.selected_option);
   });
@@ -135,14 +153,14 @@ function computeObjectiveDists(apiResult, formQuestions) {
     const total = selectedList.length;
     if (total === 0) return;
 
-    // Pre-fill with declared options so 0-count choices still appear
+    // Pre-fill declared options so 0-count choices still appear in the chart
     const counts = {};
     (qInfo.options || []).forEach(opt => { counts[opt] = 0; });
     selectedList.forEach(sel => { counts[sel] = (counts[sel] || 0) + 1; });
 
     result[qidStr] = {
       question_id: qid,
-      question_content: qInfo.question_content || `객관식 문항 ${qid + 1}`,
+      question_content: qInfo.question_content || qInfo.content || `문항 ${qid + 1}`,
       options: Object.entries(counts).map(([opt, cnt]) => ({
         option: opt,
         count: cnt,
