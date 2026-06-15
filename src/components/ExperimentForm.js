@@ -119,7 +119,8 @@ export default function ExperimentForm({ onSubmit, onBack, initialData }) {
 
     setLoading(true);
     try {
-      const response = await fetch('/api/run-experiment', {
+      const apiBase = process.env.REACT_APP_API_URL || '/api';
+      const response = await fetch(`${apiBase}/run-experiment`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
