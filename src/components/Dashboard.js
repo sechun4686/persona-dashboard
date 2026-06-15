@@ -700,8 +700,8 @@ export default function Dashboard({ experimentData, onBack }) {
         .wide-table th { padding: 11px 12px; background: #f8fafc; border-bottom: 2px solid #e2e8f0; color: #475569; font-weight: 700; white-space: nowrap; text-align: left; }
         .wide-table td { padding: 10px 12px; border-bottom: 1px solid #f8fafc; color: #334155; vertical-align: top; }
         .wide-table tr:hover td { background: #f8fafc; }
-        .wide-td-subj { max-width: 240px; }
-        .wide-td-subj-text { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.5; color: #475569; }
+        .wide-td-subj { max-width: 320px; }
+        .wide-td-subj-text { white-space: pre-wrap; word-break: break-word; line-height: 1.6; color: #475569; }
         .wide-td-obj { max-width: 160px; font-size: 12px; color: #475569; }
 
         @media (max-width: 900px) {

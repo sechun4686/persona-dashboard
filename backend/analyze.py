@@ -19,13 +19,11 @@ def _get_embed_model():
 
 
 def choose_k(n_valid: int) -> int:
-    if n_valid < 5:
+    if n_valid < 6:
         return 1
-    if n_valid < 15:
+    if n_valid < 16:
         return 2
-    if n_valid < 30:
-        return 3
-    return 4
+    return 3
 
 
 def embed_and_cluster(texts: list[str], k: int) -> tuple[list[int], np.ndarray]:
@@ -87,24 +85,28 @@ async def generate_cluster_labels(
 
     async def _label_one(cid: int) -> tuple[int, str]:
         texts = cluster_groups[cid]
-        sample_text = "\n".join(f"- {t[:120]}" for t in texts[:3])
+        sample_text = "\n".join(f"- {t[:120]}" for t in texts[:5])
         messages = [
             {
                 "role": "system",
                 "content": (
                     "당신은 사용자 리서치 전문가입니다. "
-                    "주어진 응답들의 공통 의견 패턴 이름을 5-8자 한국어 명사구로만 답하세요. "
+                    "주어진 응답들의 공통 의견 패턴 이름을 5-10자 한국어 명사구로만 답하세요. "
                     "설명 없이 군집 이름만 출력하세요."
                 ),
             },
             {
                 "role": "user",
-                "content": f"실험: {experiment_title}\n군집 이름 (5-8자 한국어):\n{sample_text}",
+                "content": f"실험: {experiment_title}\n군집 이름 (5-10자 한국어):\n{sample_text}",
             },
         ]
         label = await call_llm_fn(messages)
-        if label and 2 <= len(label.strip()) <= 20:
+        if label and 4 <= len(label.strip()) <= 20:
             return cid, label.strip()
+        # 라벨이 너무 짧거나 긴 경우 1회 재시도
+        label2 = await call_llm_fn(messages)
+        if label2 and 4 <= len(label2.strip()) <= 20:
+            return cid, label2.strip()
         return cid, _keyword_fallback_label(cluster_groups[cid], cid)
 
     results = await asyncio.gather(*[_label_one(cid) for cid in sorted(cluster_groups)])

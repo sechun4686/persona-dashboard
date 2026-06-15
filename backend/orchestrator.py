@@ -616,17 +616,17 @@ async def analyze_responses(state: OrchestratorState) -> OrchestratorState:
     primary_q_id = subj_q.get("question_id", 0) if subj_q else 0
     results["primary_question_id"] = primary_q_id
 
-    # 유효 응답 (is_valid=True이고 해당 문항)
+    # 유효 응답 (is_valid=True이고 해당 문항, 최소 10자 이상)
     valid_responses = [
         r for r in responses
         if r.get("question_id") == primary_q_id
         and r.get("is_valid", True)   # 이미 collect_results에서 필터됨
         and r.get("response")
-        and str(r["response"]).strip()
+        and len(str(r["response"]).strip()) >= 10
     ]
 
     n_valid = len(valid_responses)
-    print(f"[analyze_responses] 유효 응답 {n_valid}개 분석 시작.")
+    print(f"[analyze_responses] 유효 응답 {n_valid}개 분석 시작 (10자 미만 제외).")
 
     if n_valid == 0:
         results["diversity_metrics"] = {
